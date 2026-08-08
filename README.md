@@ -191,18 +191,11 @@ TypeScript / Node 22+ / pnpm workspace / Fastify / SQLite(better-sqlite3) / zod 
 
 ## 로드맵
 
-동작하는 것:
+Task 생명주기·claim/lease·승인 흐름·Claude Code 연동은 동작한다.
+서버 해석 파이프라인, 배포(Docker·Helm), 실제 채널 연동이 다음 순서다.
 
-- Task 생성·전체 상태 머신·감사 로그
-- 원자적 claim + lease, lease 만료 → `stalled` → 수동 재시도 게이트
-- Start Gate, 어댑터 레지스트리(Task별 에이전트 선택)
-- 승인 흐름(`ask` → `waiting` → 승인/거부) — 동기 도구 호출처럼 동작
-- Claude Code 어댑터(headless / Terminal), Worker UI, YAML 설정
+전체 목록: **[docs/roadmap.md](docs/roadmap.md)**
 
-다음:
+## 라이선스
 
-- 서버 해석 파이프라인 — 문맥 스레드 저장·채널별 TTL·실제 LLM 해석기·라벨 카탈로그
-- 실제 채널 연동(메일·GitHub·Jira)과 소스별 문맥 키 추출, 웹훅 중복 제거
-- lease 연장(heartbeat) — 승인 대기가 길어질 때 `stalled`로 빠지지 않게
-- 에이전트 진행 상황 관찰(스트리밍) UI
-- 채널·Worker 등록과 키 발급 흐름
+[MIT](LICENSE)
