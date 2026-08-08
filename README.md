@@ -23,66 +23,68 @@
 
 ```mermaid
 flowchart TB
-    CH["지정 채널<br/><small>전용 주소 · 웹훅</small>"]
+    CH["지정 채널 · 웹훅"]
 
-    subgraph CP["Control Plane · 백엔드 — 해석은 가능, 실행은 불가"]
-        direction LR
-        COL["수집기<br/><small>웹훅 수신 · 문맥 키 추출</small>"]
-        TH["문맥 스레드<br/><small>문맥 키당 1개 · 채널별 TTL</small>"]
-        IN["해석기 (LLM)<br/><small>문맥 판정 · 라벨 결정</small>"]
-        DP["분배기 + Task 스토어<br/><small>상태 · 생명주기 · claim/lease</small>"]
-        COL -->|"문맥 키로 축적"| TH
-        TH -->|"판정 + debounce"| IN
-        IN -->|"fast_pass · complete"| DP
-        IN -.->|"needs_context"| TH
+    subgraph CP["Control Plane · 서버"]
+        COL["수집기"]
+        TH["문맥 스레드"]
+        IN["해석기 · LLM"]
+        DP["분배기 + Task 스토어"]
+        COL --> TH
+        TH --> IN
+        IN --> DP
     end
 
-    subgraph EP["Execution Plane · 사용자 기기 — 자격 증명과 도구는 여기에만"]
-        direction LR
-        WK["Worker<br/><small>폴링 · claim · 결과 중계</small>"]
-        GT{"Start Gate<br/><small>수락 / 기각</small>"}
-        AD["Agent Adapter<br/><small>에이전트 시작만 담당</small>"]
-        RP["로컬 보고 API<br/><small>completed · failed · ask</small>"]
+    subgraph EP["Execution Plane · 사용자 기기"]
+        WK["Worker · claim · 보고 수신"]
+        GT["Start Gate"]
+        AD["Agent Adapter"]
         WK --> GT
-        GT -->|"allow"| AD
+        GT --> AD
     end
 
-    AG["대상 에이전트<br/><small>외부 · 자체 루프 · 자체 권한</small>"]
+    AG["대상 에이전트 · 외부"]
 
-    CH -->|"웹훅"| COL
+    CH -->|"이벤트 수신"| COL
     DP -->|"claim · 폴링"| WK
-    GT -.->|"deny → rejected"| DP
-    AD -->|"실행 · 보고 지시 포함"| AG
-    AG -->|"완료 · 실패 · 승인 요청"| RP
-    RP -->|"중계"| DP
+    AD -->|"시작 + 보고 지시"| AG
+    AG -.->|"완료 · 실패 · 승인 요청"| WK
+    WK -.->|"결과 중계"| DP
 ```
 
-이벤트와 Task는 1:1이 아니다. 웹훅은 **문맥 스레드**에 쌓이고, 해석기가 이벤트마다
-`fast_pass`(자기완결적 단순 요청 — 즉시 배달) / `needs_context`(더 기다림) /
-`complete`(문맥 완성) / `noise`(폐기)를 판정한다. 해석·분류 LLM은 서버에서 한 번만 돈다 —
+**위에서 아래가 정상 경로, 점선이 되돌아오는 보고다.** 서버 파이프라인은 수집기 → 문맥 스레드 →
+해석기 → 분배기 순으로 흐르고, Task가 만들어지면 사용자 기기의 Worker가 가져가 Start Gate를
+통과한 것만 에이전트에게 넘긴다. 에이전트의 보고는 Worker의 로컬 API로 돌아와 서버에 중계된다.
+
+경계가 곧 권한이다. **서버는 이벤트를 읽고 해석할 수 있어도 실행할 수는 없고**, 자격 증명과
+도구는 아래쪽 사용자 기기에만 있다. 대상 에이전트는 두 상자 밖에 있다 — 이 프로젝트가 소유하지 않는다.
+
+이벤트와 Task는 1:1이 아니다. 웹훅은 문맥 키별로 **문맥 스레드**에 쌓이고, 해석기가 이벤트마다
+네 가지로 판정한다 — `fast_pass`(자기완결적 단순 요청, 즉시 배달) / `needs_context`(더 기다림) /
+`complete`(문맥 완성) / `noise`(폐기). 해석·분류 LLM은 서버에서 이벤트당 한 번만 돈다.
 Worker마다 claim할 때마다 LLM을 돌리는 건 낭비이기 때문이다.
 
-> 위 그림에서 **문맥 스레드와 해석기는 아직 구현 중**이다. 현재는 이벤트가 곧바로 Task가 되므로
-> 실질적으로 `fast_pass` 전용 경로만 동작한다. 그 아래(claim부터 보고까지)는 모두 동작한다.
+Start Gate가 기각하거나 lease가 만료되는 예외 경로는 아래 상태도에 있다.
+
+> 그림에서 **문맥 스레드와 해석기는 아직 구현 중**이다. 현재는 이벤트가 곧바로 Task가 되므로
+> 실질적으로 `fast_pass` 전용 경로만 동작한다. claim부터 보고까지는 모두 동작한다.
 
 ### Task 생명주기
 
 ```mermaid
 stateDiagram-v2
     [*] --> pending
-    pending --> claimed: Worker claim
-    claimed --> running: Start Gate 통과
-    claimed --> rejected: Start Gate 기각
-    running --> waiting: 에이전트가 승인 요청
-    waiting --> running: 사용자 승인
-    waiting --> failed: 사용자 거부
-    running --> completed: 완료 보고
-    running --> failed: 실패 보고
-    claimed --> stalled: lease 만료
+    pending --> claimed: claim
+    claimed --> running: Gate 통과
+    claimed --> rejected: Gate 기각
+    running --> waiting: 승인 요청
+    waiting --> running: 승인
+    waiting --> failed: 거부
+    running --> completed: 완료
+    running --> failed: 실패
     running --> stalled: lease 만료
-    waiting --> stalled: lease 만료
-    stalled --> pending: 사용자가 재시도 승인
-    stalled --> failed: 사용자가 포기
+    stalled --> pending: 재시도
+    stalled --> failed: 포기
 ```
 
 **lease가 만료돼도 자동으로 재배포하지 않는다.** 작업 내용이 자연어이고 에이전트가 비결정적이라
