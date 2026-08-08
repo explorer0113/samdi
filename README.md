@@ -31,10 +31,10 @@ flowchart TB
         TH["문맥 스레드<br/><small>문맥 키당 1개 · 채널별 TTL</small>"]
         IN["해석기 (LLM)<br/><small>문맥 판정 · 라벨 결정</small>"]
         DP["분배기 + Task 스토어<br/><small>상태 · 생명주기 · claim/lease</small>"]
-        COL -->|문맥 키로 축적| TH
-        TH -->|판정 + debounce| IN
+        COL -->|"문맥 키로 축적"| TH
+        TH -->|"판정 + debounce"| IN
         IN -->|"fast_pass · complete"| DP
-        IN -.->|needs_context| TH
+        IN -.->|"needs_context"| TH
     end
 
     subgraph EP["Execution Plane · 사용자 기기 — 자격 증명과 도구는 여기에만"]
@@ -44,17 +44,17 @@ flowchart TB
         AD["Agent Adapter<br/><small>에이전트 시작만 담당</small>"]
         RP["로컬 보고 API<br/><small>completed · failed · ask</small>"]
         WK --> GT
-        GT -->|allow| AD
+        GT -->|"allow"| AD
     end
 
     AG["대상 에이전트<br/><small>외부 · 자체 루프 · 자체 권한</small>"]
 
-    CH -->|웹훅| COL
-    DP -->|claim · 폴링| WK
+    CH -->|"웹훅"| COL
+    DP -->|"claim · 폴링"| WK
     GT -.->|"deny → rejected"| DP
-    AD -->|실행 · 보고 지시 포함| AG
-    AG -->|완료 · 실패 · 승인 요청| RP
-    RP -->|중계| DP
+    AD -->|"실행 · 보고 지시 포함"| AG
+    AG -->|"완료 · 실패 · 승인 요청"| RP
+    RP -->|"중계"| DP
 ```
 
 이벤트와 Task는 1:1이 아니다. 웹훅은 **문맥 스레드**에 쌓이고, 해석기가 이벤트마다
