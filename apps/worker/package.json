@@ -1,0 +1,22 @@
+{
+  "name": "@samdi/worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@samdi/agent-adapter": "workspace:*",
+    "@samdi/config": "workspace:*",
+    "@samdi/policy-gateway": "workspace:*",
+    "@samdi/protocol": "workspace:*",
+    "@samdi/triage": "workspace:*",
+    "fastify": "^5.2.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

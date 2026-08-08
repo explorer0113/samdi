@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+
+# 실제 설정 파일에는 채널/워커 키가 들어간다. 예시 파일(*.example.yaml)만 커밋한다.
+samdi.server.yaml
+samdi.worker.yaml
+
+# 설계 작업 노트 (공개 문서는 README.md와 docs/)
+SOP.md

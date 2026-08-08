@@ -1,0 +1,34 @@
+# Worker 설정 예시 — 쓰려면 samdi.worker.yaml 또는 ~/.samdi/worker.yaml로 복사한다.
+# 전체 키 목록과 기본값: docs/configuration.md
+
+controlPlane:
+  url: http://127.0.0.1:3000
+  workerKey: demo-worker-key
+  # 데모 이벤트 주입(UI의 "이벤트 주입", demo-cli)에만 쓰인다
+  channelKey: demo-channel-key
+
+worker:
+  id: worker-1
+  # 이 Worker가 claim할 라벨. 채널의 label과 맞아야 Task를 가져간다.
+  labels: [demo]
+  pollIntervalMs: 2000
+  leaseSeconds: 600
+  # 로컬 보고 API + UI용 API 포트 (루프백 전용)
+  reportPort: 4700
+
+# Task에 agent 지정이 없을 때 쓸 에이전트
+# mock | claude-code | claude-code-terminal
+defaultAgent: mock
+
+agents:
+  claude-code:
+    # bin: /usr/local/bin/claude   # 생략하면 PATH에서 찾는다
+    # 보고용 curl은 반드시 허용돼 있어야 한다
+    allowedTools: Bash(curl *)
+    # permissionMode: acceptEdits
+    cwd: ~/.samdi/agent-workspace
+    timeoutMs: 600000
+
+  claude-code-terminal:
+    allowedTools: Bash(curl *)
+    cwd: ~/.samdi/agent-workspace
