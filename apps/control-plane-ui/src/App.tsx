@@ -350,6 +350,19 @@ function Channels({
   const [busy, setBusy] = useState(false);
   const [injectTo, setInjectTo] = useState<string | null>(null);
   const [payload, setPayload] = useState('');
+  /** 라벨을 고치는 중인 채널. 등록할 때 잘못 고른 라벨을 키를 바꾸지 않고 되돌린다. */
+  const [editingLabel, setEditingLabel] = useState<{ id: string; value: string } | null>(null);
+
+  const saveLabel = async () => {
+    if (!editingLabel?.value.trim()) return;
+    try {
+      await api.updateChannel(editingLabel.id, { label: editingLabel.value.trim() });
+      setEditingLabel(null);
+      await onChanged();
+    } catch (err) {
+      onError(err);
+    }
+  };
 
   // 라벨을 안 고르면 첫 번째 커버된 라벨을 쓴다. 라벨을 비워두면 id가 라벨이 되는데
   // 그러면 아무도 안 보는 채널이 만들어지므로, 기본값을 "도는 쪽"으로 둔다.
@@ -525,14 +538,41 @@ function Channels({
               <tr key={c.id} className={c.disabledAt ? 'disabled' : ''}>
                 <td className="mono">{c.id}</td>
                 <td>
-                  {c.label}
-                  {orphan && (
-                    <span
-                      className="chip stalled orphan"
-                      title={`이 라벨을 보는 Worker가 없습니다. 이 채널로 만들어진 Task는 pending에 남습니다. Worker의 worker.labels에 "${c.label}"을 추가하거나, 이미 처리 중인 라벨로 채널을 다시 등록하세요.`}
-                    >
-                      Worker 없음
-                    </span>
+                  {editingLabel?.id === c.id ? (
+                    <input
+                      className="label-edit"
+                      autoFocus
+                      list="covered-labels"
+                      value={editingLabel.value}
+                      onChange={(e) => setEditingLabel({ id: c.id, value: e.target.value })}
+                      onBlur={() => void saveLabel()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.nativeEvent.isComposing) void saveLabel();
+                        if (e.key === 'Escape') setEditingLabel(null);
+                      }}
+                    />
+                  ) : (
+                    <>
+                      {c.source === 'api' ? (
+                        <button
+                          className="label-button"
+                          title="클릭해서 라벨 변경 (키는 그대로입니다)"
+                          onClick={() => setEditingLabel({ id: c.id, value: c.label })}
+                        >
+                          {c.label}
+                        </button>
+                      ) : (
+                        c.label
+                      )}
+                      {orphan && (
+                        <span
+                          className="chip stalled orphan"
+                          title={`이 라벨을 보는 Worker가 없습니다. 이 채널로 만들어진 Task는 pending에 남습니다. 라벨을 눌러 Worker가 보는 값으로 바꾸거나, Worker UI에서 이 라벨을 추가하세요.`}
+                        >
+                          Worker 없음
+                        </span>
+                      )}
+                    </>
                   )}
                 </td>
                 <td className="mono">{c.interpreter.mode}</td>

@@ -235,6 +235,18 @@ async function main() {
     'worker started, polling',
   );
 
+  // 승인 대기가 길어져도 stalled로 빠지지 않게 살아 있다고 알린다.
+  // lease의 1/3 주기 — 한두 번 놓쳐도 만료되지 않을 만큼 자주.
+  const heartbeatMs = Math.max(5_000, Math.floor((leaseSeconds * 1000) / 3));
+  const heartbeat = setInterval(() => {
+    const waiting = worker.approvals.map((a) => a.taskId);
+    if (waiting.length === 0) return; // 연장할 게 없으면 부르지 않는다
+    void client
+      .heartbeat(workerId, waiting, leaseSeconds, labelStore.get())
+      .catch((err) => app.log.error({ err: String(err) }, 'heartbeat failed'));
+  }, heartbeatMs);
+  heartbeat.unref();
+
   // concurrency만큼 독립적인 루프를 돌린다. claim은 서버에서 원자적이라
   // 같은 Task를 둘이 집는 일은 없다. 사람을 기다리는 Task가 있어도
   // 다른 루프가 계속 다음 일을 집는다.
@@ -250,6 +262,7 @@ async function main() {
     }
   };
   await Promise.all(Array.from({ length: concurrency }, loop));
+  clearInterval(heartbeat);
   await app.close();
 }
 

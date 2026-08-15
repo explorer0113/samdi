@@ -125,6 +125,12 @@ export const api = {
   channels: () => get<{ channels: ChannelRow[] }>('/admin/channels'),
   createChannel: (body: { id: string; label?: string; interpreter?: unknown }) =>
     post<{ channel: ChannelRow; key: string }>('/admin/channels', body),
+  /** 라벨·해석기만 고친다. 키는 그대로다. */
+  updateChannel: (id: string, patch: { label?: string; interpreter?: unknown }) =>
+    request<{ channel: ChannelRow }>(`/admin/channels/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
   rotateKey: (id: string) => post<{ key: string }>(`/admin/channels/${id}/key`),
   /** 수신만 멈춘다. 채널도 그 채널이 만든 기록도 남는다. */
   disableChannel: (id: string) => post<{ ok: boolean }>(`/admin/channels/${id}/disable`),

@@ -74,6 +74,22 @@ export class ControlPlaneClient {
     };
   }
 
+  /**
+   * "아직 살아 있고 이 Task들을 붙들고 있다" — 승인 대기 중인 것만 lease가 연장된다.
+   * 사람이 늦게 눌렀다고 Task가 stalled로 빠지면 안 되기 때문이다.
+   */
+  async heartbeat(
+    workerId: string,
+    taskIds: string[],
+    leaseSeconds: number,
+    labels: string[],
+  ): Promise<{ extended: string[] }> {
+    return (await this.request(`/workers/${workerId}/heartbeat`, {
+      method: 'POST',
+      body: JSON.stringify({ taskIds, leaseSeconds, labels }),
+    })) as { extended: string[] };
+  }
+
   async setAgent(taskId: string, agent: string): Promise<{ task: Task }> {
     return (await this.request(`/tasks/${taskId}/agent`, {
       method: 'POST',

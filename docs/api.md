@@ -141,6 +141,28 @@ curl "$CP/admin/channels" -H "$ADMIN"
 `source`가 중요하다. **`config`는 설정 파일에서 온 채널이라 관리 API로 바꿀 수 없다** —
 파일이 진실이라 고쳐봐야 다음 시작에 되돌아가기 때문이다(`403`). `samdi.server.yaml`을 고친다.
 
+### 라벨·해석기 고치기
+
+```sh
+curl -X PATCH "$CP/admin/channels/mail" \
+  -H "$JSON" -H "$ADMIN" \
+  -d '{"label":"demo"}'
+```
+
+**키는 그대로다.** 등록할 때 아무도 안 보는 라벨을 골랐다는 건 나중에 알게 되는데,
+그때 채널을 지웠다 다시 만들면 키까지 바뀌어 이미 설정해둔 웹훅을 전부 고쳐야 한다 —
+라벨 하나 때문에 치를 값이 아니다.
+
+해석기도 같은 방법으로 바꾼다(둘 중 하나만 줘도 되고, 안 준 쪽은 유지된다):
+
+```sh
+curl -X PATCH "$CP/admin/channels/mail" -H "$JSON" -H "$ADMIN" \
+  -d '{"interpreter":{"mode":"passthrough"}}'
+```
+
+**이미 만들어진 Task의 라벨은 바뀌지 않는다.** 그건 "그때 이 라벨로 배달됐다"는 기록이고,
+소급해 바꾸면 감사 기록이 거짓이 된다. 바뀐 라벨은 이후에 만들어지는 Task부터 적용된다.
+
 ### 키 재발급
 
 ```sh
@@ -320,6 +342,29 @@ curl -X POST "$CP/tasks/$TASK_ID/report" -H "$JSON" -H "$WK" -d '{"type":"comple
 | `rejected` | `reason` | → `rejected` (시작 자체를 거부) |
 
 상태 머신에 없는 전이는 `409`다. 예를 들어 claim 없이 `completed`를 보내면 거부된다.
+
+### heartbeat — 승인 대기가 길어져도 죽지 않게
+
+```sh
+curl -X POST "$CP/workers/worker-1/heartbeat" \
+  -H "$JSON" -H "$WK" \
+  -d '{"taskIds":["7501633a-…"],"leaseSeconds":600,"labels":["demo"]}'
+```
+
+```json
+{ "extended": ["7501633a-…"] }
+```
+
+**`waiting`인 Task만 연장된다.** 사람이 승인 버튼을 늦게 누른다고 Task가 `stalled`로
+빠지면 안 되기 때문이다. 반대로 진행 중(`claimed`·`running`)인 Task는 **일부러 연장하지
+않는다** — 그걸 연장하면 에이전트가 조용히 죽은 경우(터미널 창을 그냥 닫는 등)를 영영
+못 잡는데, 그게 lease가 잡으라고 있는 바로 그 상황이다.
+
+Worker가 죽으면 heartbeat도 멈추므로 `waiting`도 결국 만료된다. 즉 이 연장이 기대는 것은
+"Worker가 살아 있고 아직 이 Task를 붙들고 있다"는 사실 하나뿐이다.
+
+Worker는 lease의 1/3 주기로 보내고, 연장할 게 없으면 아예 부르지 않는다.
+감사 타임라인에는 남기지 않는다 — 주기적으로 도는 신호라 기록을 덮어버린다.
 
 ### 재시작 신고
 

@@ -235,6 +235,47 @@ export class ChannelRegistry {
     };
   }
 
+  /**
+   * 라벨이나 해석기 설정을 고친다. 키는 건드리지 않는다.
+   *
+   * 라벨을 고칠 수 있어야 하는 이유는, 등록할 때 아무도 안 보는 라벨을 골랐다는 걸
+   * 나중에 알게 되기 때문이다. 그때 채널을 지웠다 다시 만들면 키까지 바뀌어서
+   * 이미 설정해둔 웹훅을 전부 고쳐야 한다 — 라벨 하나 때문에 치를 값이 아니다.
+   *
+   * 이미 만들어진 Task의 라벨은 그대로 둔다. 그건 "그때 이 라벨로 배달됐다"는
+   * 기록이고, 소급해 바꾸면 감사 기록이 거짓이 된다.
+   */
+  update(channelId: string, patch: { label?: string; interpreter?: unknown }): ChannelRecord {
+    const row = this.db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId) as
+      | ChannelRow
+      | undefined;
+    if (!row) throw new ChannelNotFoundError(channelId);
+    if (row.source !== 'api') throw new ChannelNotEditableError(channelId);
+
+    const label = patch.label?.trim() || row.label;
+    const interpreter =
+      patch.interpreter === undefined
+        ? interpreterConfigSchema.parse(safeJson(row.interpreter))
+        : interpreterConfigSchema.parse(patch.interpreter);
+
+    this.db
+      .prepare('UPDATE channels SET label = ?, interpreter = ? WHERE id = ?')
+      .run(label, JSON.stringify(interpreter), channelId);
+
+    const next = { ...row, label, interpreter: JSON.stringify(interpreter) };
+    // 비활성화된 채널은 런타임에 없다 — 되살리는 건 재등록의 몫이다.
+    if (!row.disabled_at) this.runtimes.set(channelId, this.toRuntime(next));
+
+    return {
+      id: channelId,
+      label,
+      source: 'api',
+      createdAt: row.created_at,
+      disabledAt: row.disabled_at,
+      interpreter,
+    };
+  }
+
   /** 키를 새로 발급한다. 예전 키는 그 즉시 통하지 않는다. */
   rotateKey(channelId: string): string {
     const row = this.db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId) as

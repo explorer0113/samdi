@@ -216,6 +216,35 @@ export class TaskStore {
     return rows.map((r) => r.id);
   }
 
+  /**
+   * 승인 대기 중인 Task의 lease를 연장한다 — 사람을 기다리는 동안은 시계를 멈춘다.
+   *
+   * **`waiting`만 연장하는 게 요점이다.** 진행 중(`claimed`·`running`)까지 연장하면
+   * 에이전트가 조용히 죽은 경우(터미널 창을 그냥 닫는 등)를 영영 못 잡는다. 그건
+   * lease가 잡아야 할 바로 그 상황이다. 반면 `waiting`은 왜 안 끝나는지 시스템이
+   * 이미 알고 있고 — 사람이 아직 안 눌렀다 — 그걸 실패로 볼 이유가 없다.
+   *
+   * Worker가 죽으면 heartbeat도 멈추므로 waiting도 결국 만료된다. 즉 이 연장은
+   * "Worker가 살아 있고 아직 이 Task를 붙들고 있다"는 사실에만 기댄다.
+   */
+  extendWaitingLeases(workerId: string, taskIds: string[], leaseSeconds: number): string[] {
+    if (taskIds.length === 0) return [];
+    const until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+    const placeholders = taskIds.map(() => '?').join(',');
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM tasks
+         WHERE worker_id = ? AND status = 'waiting' AND id IN (${placeholders})`,
+      )
+      .all(workerId, ...taskIds) as Array<{ id: string }>;
+    if (rows.length === 0) return [];
+
+    const update = this.db.prepare('UPDATE tasks SET lease_expires_at = ? WHERE id = ?');
+    for (const row of rows) update.run(until, row.id);
+    // 감사 이벤트는 남기지 않는다 — 주기적으로 도는 신호라 타임라인을 덮어버린다.
+    return rows.map((r) => r.id);
+  }
+
   /** lease 만료 → stalled. 자동 재배포는 하지 않는다 (SOP: 수동 게이트). */
   sweepExpiredLeases(): number {
     const t = now();

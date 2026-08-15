@@ -5,10 +5,12 @@ import { ZodError } from 'zod';
 import {
   claimRequestSchema,
   createChannelRequestSchema,
+  heartbeatRequestSchema,
   ingestRequestSchema,
   retryRequestSchema,
   setAgentRequestSchema,
   taskReportSchema,
+  updateChannelRequestSchema,
   type TaskStatus,
 } from '@samdi/protocol';
 import { InvalidTransitionError } from '@samdi/task-domain';
@@ -173,6 +175,19 @@ export function buildServer({
     return { recovered: store.recoverWorkerTasks(workerId) };
   });
 
+  /**
+   * Worker가 살아 있다는 신호. 승인 대기 중인 Task의 lease를 연장한다.
+   *
+   * 사람이 승인 버튼을 늦게 누른다고 Task가 stalled로 빠지면 안 된다. 반대로
+   * 진행 중인 Task까지 연장하면 에이전트가 조용히 죽은 걸 못 잡으므로 연장하지 않는다.
+   */
+  app.post('/workers/:workerId/heartbeat', { preHandler: requireWorkerKey }, async (req) => {
+    const { workerId } = req.params as { workerId: string };
+    const body = heartbeatRequestSchema.parse(req.body);
+    workers.seen(workerId, body.labels);
+    return { extended: store.extendWaitingLeases(workerId, body.taskIds, body.leaseSeconds) };
+  });
+
   /** 처리할 에이전트 지정 — pending 동안만 가능 */
   app.post('/tasks/:taskId/agent', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { taskId } = req.params as { taskId: string };
@@ -276,6 +291,17 @@ export function buildServer({
     const body = createChannelRequestSchema.parse(req.body);
     const created = channels.create(body);
     return reply.code(201).send(created);
+  });
+
+  /**
+   * 라벨·해석기 수정. 키는 그대로다.
+   * 등록할 때 아무도 안 보는 라벨을 골랐다는 걸 나중에 알게 되므로 필요하다 —
+   * 지웠다 다시 만들면 키가 바뀌어 웹훅 설정을 전부 고쳐야 한다.
+   */
+  app.patch('/admin/channels/:channelId', admin, async (req) => {
+    const { channelId } = req.params as { channelId: string };
+    const body = updateChannelRequestSchema.parse(req.body);
+    return { channel: channels.update(channelId, body) };
   });
 
   /** 키 재발급. 예전 키는 즉시 통하지 않는다. */

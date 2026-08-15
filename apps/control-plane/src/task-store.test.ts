@@ -211,3 +211,66 @@ describe('TaskStore', () => {
     expect(store.resolveStalled(task.id, 'abandon').status).toBe('failed');
   });
 });
+
+describe('승인 대기 중 lease 연장 (heartbeat)', () => {
+  /** claim 직후 lease를 과거로 밀어 만료 직전 상태를 만든다 */
+  function claimAndExpire(taskId: string, workerId = 'w1') {
+    db.prepare('UPDATE tasks SET lease_expires_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 1000).toISOString(),
+      taskId,
+    );
+    return workerId;
+  }
+
+  it('waiting인 Task는 연장돼 stalled로 빠지지 않는다', async () => {
+    const task = await store.createTask('demo', 'demo', '승인 기다리는 일');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(task.id, { type: 'waiting', question: '할까요?' });
+    claimAndExpire(task.id);
+
+    expect(store.extendWaitingLeases('w1', [task.id], 600)).toEqual([task.id]);
+    expect(store.sweepExpiredLeases()).toBe(0);
+    expect((await store.getTaskDetail(task.id)).task.status).toBe('waiting');
+  });
+
+  it('진행 중인 Task는 연장하지 않는다 — 에이전트가 조용히 죽은 걸 잡아야 하므로', async () => {
+    const task = await store.createTask('demo', 'demo', '돌고 있는 일');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(task.id, { type: 'started' });
+    claimAndExpire(task.id);
+
+    expect(store.extendWaitingLeases('w1', [task.id], 600)).toEqual([]);
+    expect(store.sweepExpiredLeases()).toBe(1);
+    expect((await store.getTaskDetail(task.id)).task.status).toBe('stalled');
+  });
+
+  it('다른 Worker의 Task는 연장하지 않는다', async () => {
+    const task = await store.createTask('demo', 'demo', '남의 일');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(task.id, { type: 'waiting', question: '?' });
+
+    expect(store.extendWaitingLeases('w2', [task.id], 600)).toEqual([]);
+  });
+
+  it('목록에 없는 Task는 연장하지 않는다 — Worker가 놓친 건 만료돼야 한다', async () => {
+    const task = await store.createTask('demo', 'demo', '잊힌 일');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(task.id, { type: 'waiting', question: '?' });
+    claimAndExpire(task.id);
+
+    expect(store.extendWaitingLeases('w1', [], 600)).toEqual([]);
+    expect(store.sweepExpiredLeases()).toBe(1);
+  });
+
+  it('연장은 감사 타임라인을 더럽히지 않는다 — 주기적으로 도는 신호이므로', async () => {
+    const task = await store.createTask('demo', 'demo', '일');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(task.id, { type: 'waiting', question: '?' });
+    const before = (await store.getTaskDetail(task.id)).events.length;
+
+    store.extendWaitingLeases('w1', [task.id], 600);
+    store.extendWaitingLeases('w1', [task.id], 600);
+
+    expect((await store.getTaskDetail(task.id)).events).toHaveLength(before);
+  });
+});

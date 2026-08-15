@@ -52,6 +52,34 @@ export const claimResponseSchema = z.object({
   payload: z.string().nullable(),
 });
 
+/**
+ * PATCH /admin/channels/:id — 라벨·해석기 수정 (관리 키로 인증).
+ * 키는 건드리지 않는다 — 라벨 하나 고치려고 웹훅 설정을 전부 바꾸게 할 수는 없다.
+ */
+export const updateChannelRequestSchema = z
+  .object({
+    label: z.string().min(1).optional(),
+    interpreter: z.unknown().optional(),
+  })
+  .refine((v) => v.label !== undefined || v.interpreter !== undefined, {
+    message: 'label이나 interpreter 중 적어도 하나는 있어야 한다',
+  });
+
+/**
+ * POST /workers/:workerId/heartbeat — Worker가 살아 있다는 신호.
+ *
+ * 승인 대기 중인 Task의 lease를 연장한다. 사람이 늦게 눌렀다고 Task가 stalled로
+ * 빠지면 안 되기 때문이다. 진행 중인 Task는 연장하지 않는다 — 그건 lease가 잡아야 할
+ * 상황(에이전트가 조용히 죽음)과 구분이 안 되기 때문이다.
+ */
+export const heartbeatRequestSchema = z.object({
+  /** 이 Worker가 아직 붙들고 있는 Task들. 여기 없는 건 연장되지 않는다. */
+  taskIds: z.array(z.string()).default([]),
+  leaseSeconds: z.number().int().positive().max(3600).default(600),
+  /** 폴링이 뜸한 동안에도 Worker 목록이 최신이도록 함께 보낸다 */
+  labels: z.array(z.string()).min(1),
+});
+
 /** POST /tasks/:taskId/report — Worker → Control Plane 진행 보고 */
 export const taskReportSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('rejected'), reason: z.string() }),

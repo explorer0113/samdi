@@ -252,3 +252,60 @@ describe('삭제', () => {
     expect(registry.authenticate('reuse', fresh)).not.toBeNull();
   });
 });
+
+describe('라벨·해석기 수정', () => {
+  it('라벨을 바꿔도 키는 그대로다 — 웹훅 설정을 고치지 않아도 된다', () => {
+    const registry = restart();
+    const { key } = registry.create({ id: 'mail', label: 'wrong' });
+
+    expect(registry.update('mail', { label: 'demo' }).label).toBe('demo');
+    expect(registry.authenticate('mail', key)).not.toBeNull();
+    expect(registry.get('mail')?.label).toBe('demo');
+  });
+
+  it('바뀐 라벨로 만들어지는 Task부터 적용된다 (런타임 반영)', () => {
+    const registry = restart();
+    registry.create({ id: 'mail', label: 'wrong' });
+    registry.update('mail', { label: 'demo' });
+    // 파이프라인이 Task를 만들 때 쓰는 값
+    expect(registry.get('mail')?.label).toBe('demo');
+    expect(registry.get('mail')?.config.label).toBe('demo');
+  });
+
+  it('해석기만 따로 바꿀 수 있고, 안 준 쪽은 그대로다', () => {
+    const registry = restart();
+    registry.create({ id: 'mail', label: 'demo', interpreter: { mode: 'claude' } });
+
+    registry.update('mail', { interpreter: { mode: 'passthrough' } });
+    expect(registry.get('mail')?.config.interpreter.mode).toBe('passthrough');
+    expect(registry.get('mail')?.label).toBe('demo'); // 라벨은 유지
+  });
+
+  it('재시작해도 유지된다', () => {
+    restart().create({ id: 'mail', label: 'wrong' });
+    restart().update('mail', { label: 'demo' });
+    expect(restart().get('mail')?.label).toBe('demo');
+  });
+
+  it('설정 파일에서 온 채널은 못 고친다', () => {
+    const registry = restart([channel('demo', 'ck')]);
+    expect(() => registry.update('demo', { label: 'x' })).toThrow(ChannelNotEditableError);
+  });
+
+  it('없는 채널은 NotFound', () => {
+    expect(() => restart().update('nope', { label: 'x' })).toThrow(ChannelNotFoundError);
+  });
+
+  it('이미 만들어진 Task의 라벨은 소급해 바뀌지 않는다 — 감사 기록이므로', () => {
+    const registry = restart();
+    registry.create({ id: 'mail', label: 'wrong' });
+    db.prepare("INSERT INTO payloads (ref, body, created_at) VALUES ('p1', 'x', '')").run();
+    db.prepare(
+      `INSERT INTO tasks (id, channel_id, label, payload_ref, status, created_at, updated_at)
+       VALUES ('t1', 'mail', 'wrong', 'p1', 'completed', '', '')`,
+    ).run();
+
+    registry.update('mail', { label: 'demo' });
+    expect(db.prepare("SELECT label FROM tasks WHERE id = 't1'").get()).toEqual({ label: 'wrong' });
+  });
+});
