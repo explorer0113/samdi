@@ -80,6 +80,23 @@ export function App() {
     }
   };
 
+  /**
+   * 사람이 직접 종료 처리한다. 에이전트가 보고 없이 끝났을 때 쓴다 —
+   * 두면 lease가 만료될 때까지(기본 10분) Worker가 묶여 뒤가 막힌다.
+   */
+  const finish = async (taskId: string, outcome: 'completed' | 'failed') => {
+    const what = outcome === 'completed' ? '완료로 처리' : '종료';
+    if (!confirm(`이 Task를 ${what}할까요?\n에이전트가 아니라 사람이 처리했다고 기록됩니다.`)) {
+      return;
+    }
+    try {
+      await api.finish(taskId, outcome);
+      void refresh();
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const approve = async (taskId: string, decision: 'approve' | 'deny') => {
     try {
       await api.approve(taskId, decision);
@@ -134,10 +151,35 @@ export function App() {
                   <span>
                     라벨 {c.label} · {timeOf(c.startedAt)} 시작
                   </span>
+                  {/* 에이전트가 보고 없이 끝나면 여기서 사람이 풀어줘야 한다 —
+                      안 그러면 lease가 만료될 때까지 이 Task가 Worker를 붙든다.
+                      아직 시작 전(승인 대기)이면 목록 행의 승인/거부가 맞는 행동이므로
+                      여기서는 보여주지 않는다. */}
+                  {c.phase !== 'awaiting_approval' && (
+                    <div className="finish-actions">
+                      <button
+                        className="small approve"
+                        title="에이전트가 일은 마쳤는데 보고를 안 한 경우"
+                        onClick={() => void finish(c.taskId, 'completed')}
+                      >
+                        완료로 처리
+                      </button>{' '}
+                      <button
+                        className="small danger"
+                        title="에이전트가 죽었거나 포기하는 경우"
+                        onClick={() => void finish(c.taskId, 'failed')}
+                      >
+                        종료
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             ) : (
               <p className="current-idle">대기 중 — 다음 Task를 폴링하고 있습니다.</p>
+            )}
+            {state && (
+              <Concurrency state={state} onError={setError} onChanged={refresh} />
             )}
           </section>
 
@@ -401,9 +443,9 @@ function Labels({
               </span>
             ))}
           </div>
-          {state.labelsOverridden && (
+          {state.overridden.labels && (
             <p className="hint">
-              설정 파일 값(<code>{state.configuredLabels.join(', ')}</code>)과 다릅니다.{' '}
+              설정 파일 값(<code>{state.configured.labels.join(', ')}</code>)과 다릅니다.{' '}
               <button className="small" onClick={() => void reset()}>
                 설정값으로 되돌리기
               </button>
@@ -412,5 +454,51 @@ function Labels({
         </>
       )}
     </section>
+  );
+}
+
+/**
+ * 한 번에 몇 건까지 감당할지. 1이면 사람을 기다리는 작업 하나가 뒤를 전부 막는다 —
+ * 승인이 끼어 있는 구조에서는 실제로 자주 겪는 일이다.
+ */
+function Concurrency({
+  state,
+  onError,
+  onChanged,
+}: {
+  state: UiState;
+  onError: (msg: string) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const change = async (next: number) => {
+    if (next < 1 || next > 32) return;
+    try {
+      await api.setConcurrency(next);
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  // 줄이는 중이면 진행 중인 일이 끝날 때까지 실제 루프 수가 더 많다.
+  const shrinking = state.runningLoops > state.concurrency;
+
+  return (
+    <div className="concurrency">
+      <span>동시 처리</span>
+      <button className="small" onClick={() => void change(state.concurrency - 1)}>
+        −
+      </button>
+      <b>{state.concurrency}</b>
+      <button className="small" onClick={() => void change(state.concurrency + 1)}>
+        +
+      </button>
+      {shrinking && (
+        <span className="detail">진행 중인 {state.runningLoops}건이 끝나면 반영됩니다</span>
+      )}
+      {state.overridden.concurrency && !shrinking && (
+        <span className="detail">설정값 {state.configured.concurrency}</span>
+      )}
+    </div>
   );
 }

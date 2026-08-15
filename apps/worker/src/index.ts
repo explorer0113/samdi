@@ -7,7 +7,7 @@ import { ClaudeCodeAdapter, MockAgentAdapter, type AgentAdapter } from '@samdi/a
 import { ApprovalStartGate } from '@samdi/policy-gateway';
 import { ActivityLog } from './activity-log.js';
 import { ControlPlaneClient } from './control-plane-client.js';
-import { LabelStore } from './labels.js';
+import { WorkerState } from './worker-state.js';
 import { Worker } from './worker.js';
 
 /**
@@ -43,13 +43,13 @@ const {
   leaseSeconds,
   reportPort,
   reportHost,
-  concurrency,
+  concurrency: configuredConcurrency,
 } = config.worker;
 const defaultAgent = config.defaultAgent;
 
-// 어떤 라벨의 일을 받을지는 이 기기의 결정이다 — 화면에서 바꿀 수 있고,
-// 설정 파일 값은 기준값으로 남아 언제든 되돌릴 수 있다.
-const labelStore = new LabelStore(configuredLabels);
+// 무슨 일을 받을지(labels)와 한 번에 몇 건을 감당할지(concurrency)는 이 기기의
+// 결정이다 — 화면에서 바꿀 수 있고, 설정 파일 값은 기준값으로 남는다.
+const state = new WorkerState({ labels: configuredLabels, concurrency: configuredConcurrency });
 
 const app = Fastify({ logger: true });
 const activity = new ActivityLog();
@@ -69,7 +69,7 @@ const worker = new Worker({
   defaultAgent,
   activity,
   workerId,
-  labels: () => labelStore.get(),
+  labels: () => state.labels,
   leaseSeconds,
   reportBaseUrl: `http://127.0.0.1:${reportPort}`,
   log: app.log,
@@ -103,28 +103,87 @@ app.post('/report/:taskId', async (req, reply) => {
 app.post('/ui/labels', async (req, reply) => {
   const { labels: next, reset } = (req.body ?? {}) as { labels?: unknown; reset?: boolean };
   try {
-    if (reset) return { labels: labelStore.reset(), overridden: false };
-    if (!Array.isArray(next) || next.some((l) => typeof l !== 'string')) {
-      return reply.code(400).send({ error: 'labels는 문자열 배열이어야 한다' });
+    if (reset) {
+      state.reset();
+      applyConcurrency();
+    } else {
+      if (!Array.isArray(next) || next.some((l) => typeof l !== 'string')) {
+        return reply.code(400).send({ error: 'labels는 문자열 배열이어야 한다' });
+      }
+      state.setLabels(next as string[]);
+      activity.push('labels:changed', undefined, state.labels.join(', '));
     }
-    const applied = labelStore.set(next as string[]);
-    activity.push('labels:changed', undefined, applied.join(', '));
-    return { labels: applied, overridden: labelStore.overridden };
+    return { labels: state.labels, overridden: state.overridden.labels };
   } catch (err) {
     return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 
+/**
+ * 동시에 처리할 Task 수를 바꾼다.
+ * 늘리면 즉시 반영되고, 줄이면 진행 중인 일이 끝난 뒤에 반영된다 —
+ * 사람이 승인하기를 기다리는 작업을 중간에 끊을 수는 없기 때문이다.
+ */
+app.post('/ui/concurrency', async (req, reply) => {
+  const { concurrency: next } = (req.body ?? {}) as { concurrency?: unknown };
+  try {
+    state.setConcurrency(Number(next));
+    applyConcurrency();
+    activity.push('concurrency:changed', undefined, String(state.concurrency));
+    return { concurrency: state.concurrency, running: loops.length };
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+/**
+ * 사람이 직접 종료 처리한다 — 에이전트가 보고 없이 끝난 Task를 푸는 유일한 길이다.
+ *
+ * 이게 없으면 lease가 만료될 때까지(기본 10분) 그 Task가 Worker를 붙들고, 동시 처리
+ * 수가 1이면 뒤가 전부 막힌다. 실제로 겪은 일이다.
+ *
+ * 에이전트의 보고와 같은 경로를 타되, 요약에 사람이 처리했음을 남긴다 —
+ * 감사 기록이 "에이전트가 완료를 보고했다"고 거짓말하면 안 된다.
+ */
+app.post('/ui/tasks/:taskId/finish', async (req, reply) => {
+  const { taskId } = req.params as { taskId: string };
+  const { outcome, note } = (req.body ?? {}) as { outcome?: string; note?: string };
+  if (outcome !== 'completed' && outcome !== 'failed') {
+    return reply.code(400).send({ error: 'outcome must be completed or failed' });
+  }
+  const suffix = note?.trim() ? `: ${note.trim()}` : '';
+  const result = worker.handleLocalReport(
+    taskId,
+    outcome === 'completed'
+      ? { type: 'completed', summary: `사람이 직접 완료 처리함${suffix}` }
+      : { type: 'failed', reason: `사람이 직접 종료함${suffix}` },
+  );
+  if (!result.ok) {
+    // 에이전트가 시작되기 전(승인 대기)에는 보고를 받을 통로가 없다.
+    // 그 단계에서 맞는 행동은 승인/거부이지 완료 처리가 아니다.
+    const waiting = worker.approvals.some((a) => a.taskId === taskId);
+    return reply.code(waiting ? 409 : 404).send({
+      error: waiting
+        ? '아직 시작 전이라 완료 처리할 수 없다 — 승인하거나 거부할 것'
+        : `no task in progress: ${taskId}`,
+    });
+  }
+  activity.push(`manual:${outcome}`, taskId, note?.trim() || undefined);
+  return { ok: true };
+});
+
 /** worker-ui용 로컬 API */
 app.get('/ui/state', async () => ({
   workerId,
-  labels: labelStore.get(),
-  configuredLabels: labelStore.configured,
-  labelsOverridden: labelStore.overridden,
+  labels: state.labels,
+  concurrency: state.concurrency,
+  /** 실제로 도는 루프 수. 줄이는 중이면 concurrency보다 클 수 있다. */
+  runningLoops: loops.length,
+  configured: state.configured,
+  overridden: state.overridden,
   controlPlaneUrl,
   current: worker.current,
   approvals: worker.approvals,
-  concurrency,
   activity: activity.list(),
 }));
 
@@ -184,6 +243,45 @@ app.post('/ui/tasks/:taskId/resolve', async (req, reply) => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let stopping = false;
+
+/**
+ * 독립적으로 도는 폴링 루프들. 개수가 곧 동시 처리 수다.
+ * claim은 서버에서 원자적이라 같은 Task를 둘이 집는 일은 없고, 사람을 기다리는
+ * Task가 있어도 다른 루프가 계속 다음 일을 집는다.
+ */
+const loops: { stop: boolean }[] = [];
+const running: Promise<void>[] = [];
+
+async function pollLoop(self: { stop: boolean }): Promise<void> {
+  // 멈추라는 표시는 **다음 바퀴에서만** 본다 — 진행 중인 Task를 중간에 버리지 않는다.
+  while (!stopping && !self.stop) {
+    let processed = false;
+    try {
+      processed = await worker.processOne();
+    } catch (err) {
+      app.log.error({ err: String(err) }, 'poll iteration failed');
+    }
+    if (!processed) await sleep(pollIntervalMs);
+  }
+}
+
+/** 현재 설정된 동시 처리 수에 맞게 루프를 늘리거나 줄인다. */
+function applyConcurrency(): void {
+  const target = state.concurrency;
+  while (loops.length < target) {
+    const self = { stop: false };
+    loops.push(self);
+    const task = pollLoop(self).finally(() => {
+      const i = loops.indexOf(self);
+      if (i >= 0) loops.splice(i, 1);
+      const j = running.indexOf(task);
+      if (j >= 0) running.splice(j, 1);
+    });
+    running.push(task);
+  }
+  // 줄일 때는 표시만 한다. 실제로 빠지는 건 그 루프가 지금 붙든 일을 끝낸 뒤다.
+  for (let i = loops.length - 1; i >= target; i--) loops[i]!.stop = true;
+}
 process.on('SIGINT', () => {
   stopping = true;
 });
@@ -226,10 +324,10 @@ async function main() {
       config: source ?? '(기본값)',
       controlPlaneUrl,
       workerId,
-      labels: labelStore.get(),
+      labels: state.labels,
       defaultAgent,
       listen: `${reportHost}:${reportPort}`,
-      concurrency,
+      concurrency: state.concurrency,
       requireApproval: config.startGate.requireApproval,
     },
     'worker started, polling',
@@ -242,26 +340,15 @@ async function main() {
     const waiting = worker.approvals.map((a) => a.taskId);
     if (waiting.length === 0) return; // 연장할 게 없으면 부르지 않는다
     void client
-      .heartbeat(workerId, waiting, leaseSeconds, labelStore.get())
+      .heartbeat(workerId, waiting, leaseSeconds, state.labels)
       .catch((err) => app.log.error({ err: String(err) }, 'heartbeat failed'));
   }, heartbeatMs);
   heartbeat.unref();
 
-  // concurrency만큼 독립적인 루프를 돌린다. claim은 서버에서 원자적이라
-  // 같은 Task를 둘이 집는 일은 없다. 사람을 기다리는 Task가 있어도
-  // 다른 루프가 계속 다음 일을 집는다.
-  const loop = async () => {
-    while (!stopping) {
-      let processed = false;
-      try {
-        processed = await worker.processOne();
-      } catch (err) {
-        app.log.error({ err: String(err) }, 'poll iteration failed');
-      }
-      if (!processed) await sleep(pollIntervalMs);
-    }
-  };
-  await Promise.all(Array.from({ length: concurrency }, loop));
+  applyConcurrency();
+  // 루프가 전부 끝날 때까지 기다린다. 도중에 수가 바뀌어도 running 배열이 갱신되므로
+  // 여기서는 "지금 살아 있는 것들"을 반복해서 기다린다.
+  while (running.length > 0) await Promise.race(running);
   clearInterval(heartbeat);
   await app.close();
 }

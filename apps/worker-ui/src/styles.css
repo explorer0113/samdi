@@ -244,3 +244,20 @@ tbody tr.question-row td {
   border-radius: 4px;
   padding: 1px 5px;
 }
+
+/* 진행 중인 Task를 사람이 직접 끝내는 버튼 */
+.finish-actions { margin-top: 4px; }
+
+/* 동시 처리 수 조절 */
+.concurrency {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.concurrency b { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 14px; text-align: center; }
+.concurrency .detail { color: var(--amber); }

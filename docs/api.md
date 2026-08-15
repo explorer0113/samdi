@@ -435,28 +435,49 @@ curl -X POST "$WORKER/ui/tasks/$TASK_ID/resolve" -H "$JSON" -d '{"action":"retry
 `/ui/*`가 Control Plane을 프록시하는 이유는 **브라우저에 키를 주지 않기 위해서다.**
 Worker가 자기 키로 대신 부른다.
 
-### 받을 라벨 바꾸기 — 재시작 없이
+### 운영값 바꾸기 — 재시작 없이
+
+무슨 일을 받을지(`labels`)와 한 번에 몇 건을 감당할지(`concurrency`)는 **이 기기의
+결정**이다. 자격 증명과 도구를 가진 쪽이 정하는 것이므로 관리 화면이 아니라 여기 있다.
 
 ```sh
 curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"labels":["demo","mail"]}'
-curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"reset":true}'   # 설정 파일 값으로
+curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"reset":true}'      # 설정 파일 값으로
+curl -X POST "$WORKER/ui/concurrency" -H "$JSON" -d '{"concurrency":3}'
 ```
 
-```json
-{ "labels": ["demo", "mail"], "overridden": true }
-```
+**라벨은 다음 claim부터 적용된다.** 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고
+매번 재시작할 수는 없다.
 
-**다음 claim부터 적용된다.** 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고 매번
-재시작할 수는 없다. 무슨 일을 받을지는 자격 증명과 도구를 가진 쪽이 정하는 것이므로
-이 결정은 Worker에 있다.
+**동시 처리 수는 늘리면 즉시, 줄이면 진행 중인 일이 끝난 뒤에 반영된다** — 사람이
+승인하기를 기다리는 작업을 중간에 끊을 수는 없기 때문이다. 줄이는 중에는
+`/ui/state`의 `runningLoops`가 `concurrency`보다 크게 보인다.
 
-바꾼 값은 `~/.samdi/worker-labels.json`에 남아 재시작해도 유지된다. 설정 파일(YAML)은
+바꾼 값은 `~/.samdi/worker-state.json`에 남아 재시작해도 유지된다. 설정 파일(YAML)은
 건드리지 않는다 — 손으로 적은 설정과 화면에서 만진 값이 한 파일에서 섞이면 무엇이
 진실인지 알 수 없게 되기 때문이다. `/ui/state`가 둘을 함께 준다(`labels`,
-`configuredLabels`, `labelsOverridden`).
+`concurrency`, `configured`, `overridden`).
 
-> 서버가 이 변경을 알게 되는 건 **다음 claim 때**다. Worker가 일을 처리하는 동안에는
+> 서버가 라벨 변경을 알게 되는 건 **다음 claim 때**다. Worker가 일을 처리하는 동안에는
 > 폴링을 쉬므로, 그동안은 관리 화면의 `coveredLabels`가 옛 값으로 보인다.
+
+### 막힌 Task를 사람이 끝내기
+
+```sh
+curl -X POST "$WORKER/ui/tasks/$TASK_ID/finish" -H "$JSON" \
+  -d '{"outcome":"completed","note":"터미널에서 확인함"}'
+curl -X POST "$WORKER/ui/tasks/$TASK_ID/finish" -H "$JSON" -d '{"outcome":"failed"}'
+```
+
+**에이전트가 보고 없이 끝났을 때 푸는 유일한 길이다.** Claude Code 터미널을 그냥 닫으면
+정확히 이 상태가 되는데, 두면 lease가 만료될 때까지(기본 10분) 그 Task가 Worker를 붙들고
+동시 처리 수가 1이면 뒤가 전부 막힌다.
+
+감사 기록에는 **사람이 처리했다고 남는다**(`"사람이 직접 완료 처리함: …"`) —
+에이전트가 보고한 것처럼 위장하지 않는다.
+
+아직 시작 전(승인 대기)인 Task에는 쓸 수 없다(`409`). 그 단계에서 맞는 행동은
+승인이나 거부다.
 
 ---
 
