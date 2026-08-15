@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { Task, TaskReport } from '@samdi/protocol';
 import type { AgentAdapter } from '@samdi/agent-adapter';
 import { AllowAllStartGate } from '@samdi/policy-gateway';
-import { PassThroughTriage, type TriageAgent } from '@samdi/triage';
 import { ActivityLog } from './activity-log.js';
 import { Worker, type WorkerClient, type WorkerDeps } from './worker.js';
 
@@ -17,6 +16,7 @@ function mkTask(id = 'task-1', agent: string | null = null): Task {
     payloadRef: 'ref-1',
     status: 'claimed',
     agent,
+    threadId: null,
     workerId: 'w1',
     leaseExpiresAt: null,
     createdAt: now,
@@ -42,7 +42,6 @@ function mkClient(tasks: Array<Task | null>) {
 function mkWorker(overrides: Partial<WorkerDeps>): Worker {
   const deps: WorkerDeps = {
     client: mkClient([]).client,
-    triage: new PassThroughTriage(),
     gate: new AllowAllStartGate(),
     adapters: { mock: { start: async () => {} } },
     defaultAgent: 'mock',
@@ -122,28 +121,6 @@ describe('Worker.processOne', () => {
     });
     await workerRef.processOne();
     expect(used).toEqual(['mock']);
-  });
-
-  it('triage drop → triaged_out 보고, 에이전트는 실행되지 않는다', async () => {
-    const { client, reports } = mkClient([mkTask()]);
-    const triage: TriageAgent = {
-      evaluate: async () => ({ verdict: 'drop', reason: '스팸' }),
-    };
-    let started = false;
-    const worker = mkWorker({
-      client,
-      triage,
-      adapters: {
-        mock: {
-          start: async () => {
-            started = true;
-          },
-        },
-      },
-    });
-    await worker.processOne();
-    expect(reports.map((r) => r.type)).toEqual(['triaged_out']);
-    expect(started).toBe(false);
   });
 
   it('Start Gate deny → rejected 보고', async () => {

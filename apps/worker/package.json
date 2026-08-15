@@ -13,7 +13,6 @@
     "@samdi/config": "workspace:*",
     "@samdi/policy-gateway": "workspace:*",
     "@samdi/protocol": "workspace:*",
-    "@samdi/triage": "workspace:*",
     "fastify": "^5.2.0"
   },
   "devDependencies": {

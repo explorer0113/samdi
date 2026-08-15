@@ -14,9 +14,43 @@ sweepIntervalMs: 30000
 # 웹훅을 받을 채널. 시작할 때 DB로 동기화된다.
 # 엔드포인트: POST /channels/<id>/events  (헤더 x-channel-key: <key>)
 channels:
+  # 기본값은 passthrough — LLM을 전혀 쓰지 않고 이벤트 하나가 곧 Task 하나가 된다.
   - id: demo
     label: demo
     key: demo-channel-key
+
+  # LLM 해석을 쓰는 채널. 이벤트가 문맥 스레드에 쌓이고, 잠잠해지면 해석기가
+  # fast_pass / needs_context / complete / noise 를 판정한다.
   # - id: mail
   #   label: inbox
   #   key: 여기에-충분히-긴-임의-문자열
+  #   interpreter:
+  #     mode: claude          # passthrough | claude | http
+  #     ttlSeconds: 3600      # 이 시간 동안 새 이벤트가 없으면 스레드를 닫는다
+  #     debounceMs: 2000      # 이만큼 잠잠해야 해석기를 돌린다
+  #     labels: [inbox, coding, ops]   # 해석기가 고를 수 있는 라벨 (닫힌 집합)
+  #     claude:
+  #       model: claude-opus-5
+  #       effort: low
+  #     # 기본 프롬프트 뒤에 덧붙일 이 채널의 맥락 (대부분 이걸로 충분하다)
+  #     guidance: |
+  #       이 채널은 고객 지원 메일함이다.
+  #       버그 신고는 coding, 요금 문의는 ops로 분류한다.
+  #       마케팅 메일과 자동 영수증은 noise다.
+  #     # 기본 프롬프트를 통째로 대체하려면 (판정 4종의 의미는 유지해야 한다)
+  #     # systemPrompt: |
+  #     #   ...
+
+  # 다른 LLM을 쓰는 채널. 판정을 이 주소에 위임한다 — 뒤에 무엇을 두든 상관없다.
+  # 요청/응답 규약은 docs/configuration.md 참조.
+  # - id: ops
+  #   label: ops
+  #   key: 여기에-충분히-긴-임의-문자열
+  #   interpreter:
+  #     mode: http
+  #     labels: [ops]
+  #     http:
+  #       url: http://127.0.0.1:11434/interpret
+  #       headers:
+  #         Authorization: Bearer 토큰
+  #       timeoutMs: 30000

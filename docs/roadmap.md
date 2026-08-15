@@ -18,6 +18,16 @@ samdi가 지금 무엇을 하고, 다음에 무엇을 할지. 개요는 [README]
   물어보고 답을 받는 한 번의 호출로 처리한다
 - 로컬 보고 API — 에이전트 → Worker 방향의 유일한 채널
 
+**서버 해석 파이프라인**
+
+- 문맥 스레드 — 문맥 키로 이벤트를 묶고, 채널별 TTL로 닫는다
+- 해석기 판정 4종 (`fast_pass` / `needs_context` / `complete` / `noise`) + debounce
+- 라벨 카탈로그 — 해석기가 고를 수 있는 라벨의 닫힌 집합
+- **채널별 on/off** — 기본값 `passthrough`는 LLM을 전혀 쓰지 않는다
+- **프로바이더·프롬프트가 설정에 있다** — `mode`(passthrough/claude/http), `guidance`, `systemPrompt`.
+  다른 구현은 `Interpreter` 인터페이스로 끼워넣는다
+- 해석 실패는 판정을 남기지 않고 재시도한다 — 잘못된 Task를 만들지 않는다
+
 **연동·인터페이스**
 
 - Claude Code 어댑터 2종: headless(`claude -p`), Terminal 창(macOS, 과정을 직접 보며 개입 가능)
@@ -26,14 +36,12 @@ samdi가 지금 무엇을 하고, 다음에 무엇을 할지. 개요는 [README]
 
 ## 다음
 
-### 서버 해석 파이프라인
+### 문맥 키 자동 배정
 
-가장 큰 미구현 조각. 현재는 이벤트가 곧바로 Task가 되므로 실질적으로 `fast_pass` 전용 경로만 돈다.
+지금은 발신처가 `contextKey`를 넣어줘야 이벤트가 한 스레드로 묶인다. 없으면 이벤트마다 새 스레드다.
 
-- 문맥 스레드 저장 + 채널별 TTL 만료 처리
-- 문맥 키 추출 — 소스 네이티브 키(메일 체인, Slack `thread_ts`, 이슈 번호) 우선, 없으면 LLM 배정
-- 실제 LLM 해석기 — `fast_pass` / `needs_context` / `complete` / `noise` 판정 + debounce
-- 라벨 카탈로그 — 해석기가 고를 수 있는 라벨의 닫힌 집합 (LLM이 임의 라벨을 만들지 않게)
+- 소스별 키 추출 어댑터 — 메일 `In-Reply-To` 체인, Slack `thread_ts`, 이슈 번호
+- 네이티브 키가 없을 때 열린 스레드들과 비교해 LLM이 배정하는 경로 (설계상 하이브리드의 나머지 절반)
 
 ### 배포
 

@@ -1,16 +1,34 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { interpreterConfigSchema } from '@samdi/config';
+import { PassthroughInterpreter } from '@samdi/interpreter';
 import { openDb, type Db } from './db.js';
+import { Pipeline, type ChannelRuntime } from './pipeline.js';
 import { buildServer } from './server.js';
 import { SqlitePayloadStore, TaskStore } from './task-store.js';
+import { ThreadStore } from './thread-store.js';
 
 let db: Db;
 let app: ReturnType<typeof buildServer>;
+
+const noopLog = { info: () => {}, error: () => {} };
 
 beforeEach(() => {
   db = openDb(':memory:');
   db.prepare('INSERT INTO channels (id, label, key) VALUES (?, ?, ?)').run('demo', 'demo', 'ck');
   const store = new TaskStore(db, new SqlitePayloadStore(db));
-  app = buildServer({ db, store, workerKey: 'wk', logger: false });
+  const threads = new ThreadStore(db);
+  const channels = new Map<string, ChannelRuntime>([
+    [
+      'demo',
+      {
+        config: { id: 'demo', label: 'demo', key: 'ck', interpreter: interpreterConfigSchema.parse({}) },
+        label: 'demo',
+        interpreter: new PassthroughInterpreter(),
+      },
+    ],
+  ]);
+  const pipeline = new Pipeline(channels, threads, store, noopLog);
+  app = buildServer({ db, store, pipeline, threads, workerKey: 'wk', logger: false });
 });
 
 afterEach(async () => {
@@ -27,7 +45,9 @@ async function ingest(payload = '테스트 이벤트'): Promise<string> {
     payload: { payload },
   });
   expect(res.statusCode).toBe(200);
-  return (res.json() as { taskId: string }).taskId;
+  const { taskId } = res.json() as { taskId: string | null };
+  expect(taskId).not.toBeNull();
+  return taskId!;
 }
 
 async function claim(): Promise<{ task: { id: string } | null; payload: string | null }> {

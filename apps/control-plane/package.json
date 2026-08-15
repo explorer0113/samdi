@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@samdi/config": "workspace:*",
+    "@samdi/interpreter": "workspace:*",
     "@samdi/protocol": "workspace:*",
     "@samdi/task-domain": "workspace:*",
     "better-sqlite3": "^12.0.0",

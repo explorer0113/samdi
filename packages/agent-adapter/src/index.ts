@@ -8,7 +8,7 @@ import { askDecisionResponseSchema, type Task } from '@samdi/protocol';
  */
 export interface AgentRunRequest {
   task: Task;
-  /** triage가 정제한 지시 (없으면 본문 그대로) */
+  /** 서버 해석기가 정리한 지시 (passthrough 채널이면 이벤트 본문 그대로) */
   instruction: string;
   /** Worker가 열어둔 로컬 보고 API 주소. 프롬프트에 포함시킨다. */
   reportUrl: string;

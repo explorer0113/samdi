@@ -63,6 +63,7 @@ samdi의 설정 파일(YAML) 전체 키, 환경변수 매핑, 자주 하는 변�
 | `id` | 문자열 | 필수 | 웹훅 URL에 들어간다: `POST /channels/<id>/events` |
 | `key` | 문자열 | 필수 | 웹훅 인증 키. 요청 헤더 `x-channel-key`와 비교한다 |
 | `label` | 문자열 | 선택 | 라우팅 기준. 생략하면 `id`를 라벨로 쓴다. **Worker의 `worker.labels`에 이 값이 있어야 Task를 claim한다** |
+| `interpreter` | 객체 | 선택 | 이 채널의 해석 방식. 생략하면 `passthrough`(LLM 미사용) |
 
 `channels` 기본값:
 
@@ -71,7 +72,71 @@ channels:
   - id: demo
     label: demo
     key: demo-channel-key
+    interpreter:
+      mode: passthrough
 ```
+
+### `channels[].interpreter` — 해석 설정
+
+**`mode`가 이 채널을 어떤 해석기로 처리할지 정한다.**
+
+| 모드 | 동작 |
+| --- | --- |
+| `passthrough` (기본값) | LLM을 전혀 쓰지 않는다. 이벤트 하나가 곧 Task 하나가 되고, 라벨은 채널의 `label`을 그대로 쓴다. 문맥 스레드를 만들지 않으므로 `ttlSeconds`·`debounceMs`·`labels`는 무시된다 |
+| `claude` | 내장 Anthropic 구현. 이벤트를 문맥 스레드에 쌓고, 잠잠해지면 판정한다: `fast_pass`(즉시 분배) / `complete`(문맥 완성 → 분배) / `needs_context`(더 기다림) / `noise`(폐기) |
+| `http` | 판정을 설정한 주소에 위임한다. 그 뒤에 무엇을 두든 상관없다 — 로컬 모델, 다른 프로바이더, 직접 만든 규칙 |
+
+| 키 | 타입 | 기본값 | 설명 |
+| --- | --- | --- | --- |
+| `mode` | `passthrough` \| `claude` \| `http` | `passthrough` | 위 표 참조 |
+| `ttlSeconds` | 양의 정수 | `3600` | 이 시간 동안 새 이벤트가 없으면 스레드를 `expired`로 닫는다 |
+| `debounceMs` | 0 이상 정수 | `2000` | 이벤트가 붙은 뒤 이만큼 잠잠해야 해석기를 돌린다. 연속 유입 시 호출 낭비를 막는다 |
+| `labels` | 문자열 배열 | `[]` | 해석기가 고를 수 있는 라벨의 닫힌 집합. 비우면 채널 `label` 하나만 쓴다. **여기 있는 라벨은 Worker의 `worker.labels`에도 있어야 claim된다** |
+| `guidance` | 문자열 | (없음) | 기본 프롬프트 **뒤에 덧붙일** 채널별 맥락. 프롬프트 조정은 보통 이걸로 충분하다 |
+| `systemPrompt` | 문자열 | (내장 기본값) | 기본 프롬프트를 **통째로 대체**한다. 판정 4종의 의미는 파이프라인이 의존하는 계약이므로 대체하더라도 그대로 설명해야 한다 |
+| `claude.model` | 문자열 | `claude-opus-5` | `mode: claude`일 때 쓸 모델 |
+| `claude.effort` | `low` \| `medium` \| `high` \| `xhigh` \| `max` | `low` | 분류는 가벼운 작업이라 낮은 값으로 충분하다 |
+| `http.url` | URL | (필수) | `mode: http`일 때 판정을 POST할 주소. 없으면 시작 시 오류 |
+| `http.headers` | 문자열 맵 | `{}` | 인증 헤더 등 |
+| `http.timeoutMs` | 양의 정수 | `30000` | 응답 대기 한도 |
+
+**`mode: claude`는 자격 증명이 필요하다.** Control Plane 프로세스가 `ANTHROPIC_API_KEY`(또는 `ant auth login` 프로필)를 읽을 수 있어야 한다.
+자격 증명이 없으면 해석이 실패하고, 그 스레드는 판정 없이 열린 채 남아 다음 스캔마다 재시도되다가 TTL로 닫힌다 —
+Task가 잘못 만들어지지는 않지만 아무 일도 진행되지 않으므로, 로그에 `interpreter failed`가 반복되면 자격 증명부터 확인한다.
+
+#### `mode: http` 규약
+
+samdi가 보내는 요청:
+
+```json
+{
+  "systemPrompt": "…(guidance까지 합쳐진 최종 프롬프트)…",
+  "channelId": "mail",
+  "labels": ["inbox", "coding"],
+  "events": [{ "at": "2026-01-01T00:00:00.000Z", "payload": "로그인이 안 돼요" }]
+}
+```
+
+기대하는 응답 — 판정 하나:
+
+```json
+{ "verdict": "fast_pass", "label": "coding", "instruction": "로그인 버그를 고쳐라" }
+{ "verdict": "complete",  "label": "coding", "instruction": "…" }
+{ "verdict": "needs_context", "reason": "…" }
+{ "verdict": "noise",         "reason": "…" }
+```
+
+응답이 이 규약과 다르면 판정을 지어내지 않고 `needs_context`로 둔다. HTTP 오류(비 2xx)는 실패로 보고 다음 스캔에서 재시도한다.
+`label`이 카탈로그 밖이면 첫 라벨로 되돌린다.
+
+#### 내장 구현 말고 다른 걸 쓰려면
+
+해석기는 인터페이스다. `@samdi/interpreter`의 `Interpreter`(메서드 하나: `interpret(input)`)만 만족시키고
+`createInterpreter(config, { 모드이름: () => new 내구현() })`으로 넘기면 된다 — 패키지를 고칠 필요가 없다.
+`mode: http`는 코드를 전혀 건드리지 않는 버전의 같은 탈출구다.
+
+**문맥 키.** 같은 스레드로 묶으려면 이벤트를 보낼 때 `contextKey`를 함께 넣는다(메일 체인 ID, Slack `thread_ts`, 이슈 번호 등).
+생략하면 이벤트마다 새 스레드가 열린다 — 문맥 축적 없이 이벤트 하나씩 해석된다.
 
 동기화는 upsert다 — 설정에서 지운 채널이 DB에서 삭제되지는 않는다(기존 Task의 외래키를 지키기 위해).
 
@@ -170,6 +235,79 @@ agents:
 ```
 
 `allowedTools`에서 `Bash(curl *)`를 빼지 않는다 — 빠지면 완료 보고가 막혀 Task가 `stalled`로 흘러간다.
+
+### LLM 해석을 켠다 (또는 끈다)
+
+기본값은 꺼짐이다. 켜려면 채널에 `interpreter.mode`를 준다:
+
+```yaml
+channels:
+  - id: mail
+    label: inbox
+    key: 충분히-긴-임의-문자열
+    interpreter:
+      mode: claude
+      labels: [inbox, coding]
+      ttlSeconds: 1800
+```
+
+Control Plane을 재시작하고, 그 프로세스에 `ANTHROPIC_API_KEY`가 보이는지 확인한다.
+Worker의 `worker.labels`에 `labels`의 값이 모두 들어 있어야 분배된 Task를 claim한다.
+
+되돌리려면 `mode: passthrough`로 바꾸거나 `interpreter` 블록을 지운다 — LLM 호출이 완전히 사라진다.
+
+### 해석 프롬프트를 채널에 맞게 조정한다
+
+대부분은 `guidance`로 충분하다 — 기본 프롬프트 뒤에 이 채널의 맥락만 덧붙인다:
+
+```yaml
+interpreter:
+  mode: claude
+  labels: [inbox, coding, ops]
+  guidance: |
+    이 채널은 고객 지원 메일함이다.
+    - 버그 신고는 coding, 요금·계약 문의는 ops로 분류한다.
+    - 마케팅 메일과 자동 발송 영수증은 noise다.
+    - 첫 메일이 증상만 말하고 재현 조건이 없으면 needs_context로 두고 후속 메일을 기다린다.
+```
+
+판정 체계 자체를 다시 쓰고 싶으면 `systemPrompt`로 통째로 대체한다. 단, `fast_pass` / `needs_context` /
+`complete` / `noise` 네 판정의 의미는 파이프라인이 의존하는 계약이므로 새 프롬프트에도 그대로 설명해야 한다.
+기본 프롬프트 원문은 [`packages/interpreter/src/claude.ts`](../packages/interpreter/src/claude.ts)의
+`DEFAULT_INTERPRETER_PROMPT`에 있다 — 거기서 복사해 고쳐 쓰는 걸 권한다.
+
+### 다른 LLM을 쓴다
+
+`mode: http`로 판정을 바깥에 위임한다. samdi는 그 주소 뒤에 무엇이 있는지 신경 쓰지 않는다:
+
+```yaml
+interpreter:
+  mode: http
+  labels: [inbox, coding]
+  guidance: |
+    이 채널은 고객 지원 메일함이다.
+  http:
+    url: http://127.0.0.1:11434/interpret
+    headers:
+      Authorization: Bearer 토큰
+    timeoutMs: 30000
+```
+
+그 주소는 요청의 `systemPrompt`·`labels`·`events`를 받아 판정 JSON을 돌려주면 된다(위 [규약](#mode-http-규약) 참조).
+로컬 모델을 붙이든, 다른 프로바이더 SDK를 얇게 감싸든, 규칙 기반으로 처리하든 samdi 코드는 그대로다.
+
+### 여러 이벤트를 한 작업으로 묶는다
+
+llm 모드 채널에 이벤트를 보낼 때 `contextKey`를 같이 넣으면 같은 스레드에 쌓인다:
+
+```sh
+curl -X POST http://127.0.0.1:3000/channels/mail/events \
+  -H 'content-type: application/json' -H 'x-channel-key: <키>' \
+  -d '{"payload":"로그인이 안 돼요","contextKey":"thread-42"}'
+```
+
+응답의 `taskId`는 `null`, `threadId`가 채워져 온다 — 아직 Task가 아니라 축적 중이라는 뜻이다.
+스레드 상태는 `GET /channels/<id>/threads`, 개별 스레드는 `GET /threads/<threadId>`로 본다(워커 키 필요).
 
 ### 새 채널(웹훅 수신구)을 추가한다
 

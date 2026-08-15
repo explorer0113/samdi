@@ -6,8 +6,8 @@
 시작을 통제하고, 결과를 받아 기록한다. **에이전트에게는 실행 권한을 주지 않는다** —
 자격 증명과 도구는 사용자 기기에만 있고, 서버는 이벤트를 읽고 해석할 수 있어도 실행할 수는 없다.
 
-> 상태: 실험 단계. 오케스트레이션 골격(Task 생명주기·claim/lease·승인 흐름)과
-> Claude Code 연동이 동작한다. 서버 해석 파이프라인은 진행 중이다 ([로드맵](#로드맵)).
+> 상태: 실험 단계. 오케스트레이션 골격(Task 생명주기·claim/lease·승인 흐름), 서버 해석
+> 파이프라인, Claude Code 연동이 동작한다 ([로드맵](docs/roadmap.md)).
 
 ## 이게 뭘 해결하나
 
@@ -70,8 +70,13 @@ Worker마다 claim할 때마다 LLM을 돌리는 건 낭비이기 때문이다.
 
 Start Gate가 기각하거나 lease가 만료되는 예외 경로는 아래 상태도에 있다.
 
-> 그림에서 **문맥 스레드와 해석기는 아직 구현 중**이다. 현재는 이벤트가 곧바로 Task가 되므로
-> 실질적으로 `fast_pass` 전용 경로만 동작한다. claim부터 보고까지는 모두 동작한다.
+**해석은 채널마다 설정한다.** 기본값은 `passthrough` — LLM을 전혀 호출하지 않고 이벤트 하나가 곧 Task 하나가 된다.
+`claude`(내장 구현)나 `http`(다른 LLM에 위임)로 바꾸면 위 그림대로 문맥 스레드에 쌓였다가 해석기가 판정한다.
+**프롬프트도 설정에 있다** — 채널별 맥락은 `guidance`로 덧붙이고, 필요하면 `systemPrompt`로 통째로 갈아끼운다.
+TTL·debounce·라벨 카탈로그도 마찬가지다 ([설정 문서](docs/configuration.md#channelsinterpreter--해석-설정)).
+
+해석기 자체는 인터페이스다(`interpret(input) → 판정`). 내장 구현이 안 맞으면 `mode: http`로 바깥에 맡기거나,
+직접 만든 구현을 팩토리로 끼워넣는다 — 파이프라인은 그대로다.
 
 ### Task 생명주기
 
@@ -167,16 +172,16 @@ cp samdi.worker.example.yaml samdi.worker.yaml   # Worker
 
 ```
 apps/
-  control-plane/   이벤트 수집 + Task 상태/생명주기 API (해석 파이프라인 예정)
+  control-plane/   수집기 → 해석기 → 분배기 + Task 상태/생명주기 API
   worker/          claim → Start Gate → 어댑터 → 보고 중계 (+ UI용 로컬 API)
   worker-ui/       사용자 기기 대시보드 (React + Vite)
   demo-cli/        end-to-end 조작용 CLI
 
 packages/
   config/          YAML 설정 스키마·로더 (env > 파일 > 기본값)
-  protocol/        공유 스키마: Task, 상태 머신, API 계약, 보고/판정 타입
+  protocol/        공유 스키마: Task, 문맥 스레드, 상태 머신, API 계약, 판정 타입
   task-domain/     상태 전이 규칙, 본문 저장소 인터페이스
-  triage/          1차 판단 (서버 해석기로 이동 예정 — 로드맵 참조)
+  interpreter/     해석기 인터페이스 + 내장 구현 (passthrough / claude / http)
   agent-adapter/   에이전트 실행 규약 + 어댑터 (mock, Claude Code)
   policy-gateway/  Start Gate + allow/deny/ask 판정
   tool-sdk/        에이전트에게 붙여줄 MCP 도구 (예정)
@@ -197,8 +202,8 @@ TypeScript / Node 22+ / pnpm workspace / Fastify / SQLite(better-sqlite3) / zod 
 
 ## 로드맵
 
-Task 생명주기·claim/lease·승인 흐름·Claude Code 연동은 동작한다.
-서버 해석 파이프라인, 배포(Docker·Helm), 실제 채널 연동이 다음 순서다.
+Task 생명주기·claim/lease·승인 흐름·서버 해석 파이프라인·Claude Code 연동은 동작한다.
+배포(Docker·Helm), 실제 채널 연동, 문맥 키 자동 배정이 다음 순서다.
 
 전체 목록: **[docs/roadmap.md](docs/roadmap.md)**
 

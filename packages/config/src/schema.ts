@@ -29,12 +29,77 @@ const labelsSchema = z.union([
     .refine((arr) => arr.length > 0, { message: '라벨이 비어 있다' }),
 ]);
 
+/**
+ * 채널별 해석기 설정.
+ *
+ * passthrough — LLM을 쓰지 않는다. 이벤트 하나가 곧 Task 하나(채널 라벨 그대로).
+ *               문맥 스레드도 만들지 않는다. 기본값이며, LLM 없이 돌리려면 이걸 쓴다.
+ * 그 외      — 이벤트를 문맥 스레드에 쌓고 해당 해석기가 판정한다.
+ *
+ * 해석기는 인터페이스(@samdi/interpreter의 Interpreter)로 열려 있다. 내장 구현은
+ * claude와 http 둘이고, 다른 구현을 쓰려면 createInterpreter에 팩토리를 넘기면 된다.
+ */
+/** mode: claude — 내장 Anthropic 구현 */
+export const claudeInterpreterConfigSchema = z
+  .object({
+    model: z.string().min(1).default('claude-opus-5'),
+    /** 분류는 가벼운 작업이라 낮은 effort로 충분하다 */
+    effort: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('low'),
+  })
+  .default({});
+
+/**
+ * mode: http — 아무 LLM이나 붙이기 위한 탈출구.
+ * 설정한 주소로 해석 요청을 POST하고, 판정 JSON을 그대로 돌려받는다.
+ * 로컬 모델(Ollama 등)이든 다른 프로바이더든 이 규약만 맞추면 된다.
+ */
+export const httpInterpreterConfigSchema = z.object({
+  url: z.string().url(),
+  headers: z.record(z.string()).default({}),
+  timeoutMs: z.coerce.number().int().positive().default(30_000),
+});
+
+export const interpreterConfigSchema = z
+  .object({
+    /**
+     * 이 채널을 어떤 해석기로 처리할지.
+     * passthrough — LLM 미사용. 이벤트 하나가 곧 Task 하나.
+     * claude      — 내장 Anthropic 구현.
+     * http        — 설정한 주소에 위임 (아무 LLM이나).
+     */
+    mode: z.enum(['passthrough', 'claude', 'http']).default('passthrough'),
+    /** 이 시간 동안 새 이벤트가 없으면 스레드를 expired로 닫는다 */
+    ttlSeconds: z.coerce.number().int().positive().default(3600),
+    /** 이벤트가 붙은 뒤 이만큼 잠잠해야 해석기를 돌린다 (연속 유입 시 호출 낭비 방지) */
+    debounceMs: z.coerce.number().int().nonnegative().default(2000),
+    /** 해석기가 고를 수 있는 라벨의 닫힌 집합. 비우면 채널 라벨 하나만 쓴다. */
+    labels: z.array(z.string().min(1)).default([]),
+    /** 프로바이더별 설정 — mode에 해당하는 블록만 쓰인다 */
+    claude: claudeInterpreterConfigSchema,
+    http: httpInterpreterConfigSchema.optional(),
+    /**
+     * 기본 프롬프트 뒤에 덧붙일 이 채널의 맥락.
+     * "이 채널은 고객 지원 메일이다", "견적 문의는 ops로" 같은 도메인 지식을 여기 쓴다.
+     * 대부분의 조정은 이걸로 충분하다.
+     */
+    guidance: z.string().optional(),
+    /**
+     * 기본 프롬프트를 통째로 대체한다 (탈출구).
+     * 판정 4종(fast_pass·needs_context·complete·noise)의 의미는 파이프라인이 의존하는
+     * 계약이므로, 대체하더라도 그 의미는 그대로 설명해야 한다.
+     */
+    systemPrompt: z.string().min(1).optional(),
+  })
+  .default({});
+export type InterpreterConfig = z.infer<typeof interpreterConfigSchema>;
+
 export const channelConfigSchema = z.object({
   id: z.string().min(1),
   /** 라우팅 기준. 생략하면 id를 라벨로 쓴다. */
   label: z.string().min(1).optional(),
   /** 웹훅 인증 키 */
   key: z.string().min(1),
+  interpreter: interpreterConfigSchema,
 });
 export type ChannelConfig = z.infer<typeof channelConfigSchema>;
 

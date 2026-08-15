@@ -10,6 +10,7 @@ const task: Task = {
   payloadRef: 'r1',
   status: 'claimed',
   agent: null,
+  threadId: null,
   workerId: 'w1',
   leaseExpiresAt: null,
   createdAt: now,
@@ -17,15 +18,15 @@ const task: Task = {
 };
 
 describe('AllowAllStartGate', () => {
-  it('triage 통과분은 allow', async () => {
+  it('지시가 있으면 allow', async () => {
     const gate = new AllowAllStartGate();
-    expect((await gate.evaluate(task, { verdict: 'proceed' })).verdict).toBe('allow');
+    expect((await gate.evaluate(task, '메일 회신해줘')).verdict).toBe('allow');
   });
 
-  it('triage drop은 deny로 이어진다', async () => {
+  it('지시가 비어 있으면 deny — 에이전트에게 넘길 게 없다', async () => {
     const gate = new AllowAllStartGate();
-    const decision = await gate.evaluate(task, { verdict: 'drop', reason: '스팸' });
+    const decision = await gate.evaluate(task, '   ');
     expect(decision.verdict).toBe('deny');
-    expect(decision.reason).toBe('스팸');
+    expect(decision.reason).toContain('비어');
   });
 });

@@ -11,6 +11,7 @@ function mkRequest(instruction: string): AgentRunRequest {
     payloadRef: 'r1',
     status: 'running',
     agent: null,
+    threadId: null,
     workerId: 'w1',
     leaseExpiresAt: null,
     createdAt: now,

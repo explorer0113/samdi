@@ -45,6 +45,7 @@ interface TaskRow {
   payload_ref: string;
   status: string;
   agent: string | null;
+  thread_id: string | null;
   worker_id: string | null;
   lease_expires_at: string | null;
   created_at: string;
@@ -59,6 +60,7 @@ function toTask(row: TaskRow): Task {
     payloadRef: row.payload_ref,
     status: row.status as TaskStatus,
     agent: row.agent,
+    threadId: row.thread_id,
     workerId: row.worker_id,
     leaseExpiresAt: row.lease_expires_at,
     createdAt: row.created_at,
@@ -68,7 +70,6 @@ function toTask(row: TaskRow): Task {
 
 /** Worker 보고 타입 → 목표 상태. 전이의 합법성은 상태 머신이 검증한다. */
 const REPORT_TARGET: Record<TaskReport['type'], TaskStatus> = {
-  triaged_out: 'triaged_out',
   rejected: 'rejected',
   started: 'running',
   waiting: 'waiting',
@@ -102,17 +103,23 @@ export class TaskStore {
     label: string,
     payload: string,
     agent?: string,
+    threadId?: string,
   ): Promise<Task> {
     const ref = await this.payloads.put(payload);
     const t = now();
     const id = randomUUID();
     this.db
       .prepare(
-        `INSERT INTO tasks (id, channel_id, label, payload_ref, status, agent, worker_id, lease_expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', ?, NULL, NULL, ?, ?)`,
+        `INSERT INTO tasks (id, channel_id, label, payload_ref, status, agent, thread_id, worker_id, lease_expires_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?, NULL, NULL, ?, ?)`,
       )
-      .run(id, channelId, label, ref, agent ?? null, t, t);
-    this.appendEvent(id, 'created', { channelId, label, ...(agent ? { agent } : {}) });
+      .run(id, channelId, label, ref, agent ?? null, threadId ?? null, t, t);
+    this.appendEvent(id, 'created', {
+      channelId,
+      label,
+      ...(agent ? { agent } : {}),
+      ...(threadId ? { threadId } : {}),
+    });
     return toTask(this.getRow(id));
   }
 

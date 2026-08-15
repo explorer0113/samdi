@@ -1,5 +1,5 @@
 {
-  "name": "@samdi/triage",
+  "name": "@samdi/interpreter",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,6 +10,9 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@samdi/protocol": "workspace:*"
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@samdi/config": "workspace:*",
+    "@samdi/protocol": "workspace:*",
+    "zod": "^3.25.0"
   }
 }

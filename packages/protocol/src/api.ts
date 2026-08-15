@@ -7,9 +7,18 @@ export const ingestRequestSchema = z.object({
   payload: z.string().min(1),
   /** 처리할 에이전트를 생성 시점에 지정 (claim 경합 없이 원자적). 생략 시 Worker 기본값. */
   agent: z.string().min(1).optional(),
+  /**
+   * 문맥 키 — 같은 키의 이벤트는 한 스레드에 쌓인다.
+   * 소스 네이티브 키(메일 체인, Slack thread_ts, 이슈 번호)를 발신처가 넣어준다.
+   * 생략하면 이벤트마다 새 스레드가 열린다. llm 모드 채널에서만 의미가 있다.
+   */
+  contextKey: z.string().min(1).optional(),
 });
 export const ingestResponseSchema = z.object({
-  taskId: z.string(),
+  /** Task가 바로 만들어졌으면 그 id. 문맥 스레드에 축적만 됐으면 null. */
+  taskId: z.string().nullable(),
+  /** llm 모드 채널에서 이벤트가 쌓인 스레드. passthrough면 null. */
+  threadId: z.string().nullable(),
 });
 
 /** POST /tasks/claim — Worker가 처리할 Task를 원자적으로 가져간다 (Worker API 키로 인증) */
@@ -27,7 +36,6 @@ export const claimResponseSchema = z.object({
 
 /** POST /tasks/:taskId/report — Worker → Control Plane 진행 보고 */
 export const taskReportSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('triaged_out'), reason: z.string() }),
   z.object({ type: z.literal('rejected'), reason: z.string() }),
   z.object({ type: z.literal('started') }),
   z.object({ type: z.literal('waiting'), question: z.string() }),

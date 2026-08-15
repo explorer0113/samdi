@@ -1,7 +1,6 @@
 import type { AskDecision, LocalReport, Task, TaskReport } from '@samdi/protocol';
 import type { AgentAdapter } from '@samdi/agent-adapter';
 import type { StartGate } from '@samdi/policy-gateway';
-import type { TriageAgent } from '@samdi/triage';
 import type { ActivityLog } from './activity-log.js';
 
 /** Worker가 Control Plane에 필요로 하는 최소 계약. 실제 구현은 ControlPlaneClient. */
@@ -14,7 +13,7 @@ export interface WorkerClient {
   report(taskId: string, report: TaskReport): Promise<void>;
 }
 
-export type WorkerPhase = 'triage' | 'gate' | 'agent_running' | 'awaiting_approval' | 'reporting';
+export type WorkerPhase = 'gate' | 'agent_running' | 'awaiting_approval' | 'reporting';
 
 export interface CurrentTask {
   taskId: string;
@@ -69,7 +68,6 @@ class ReportQueue {
 
 export interface WorkerDeps {
   client: WorkerClient;
-  triage: TriageAgent;
   gate: StartGate;
   /** 이름 → 어댑터 레지스트리. Task의 agent 필드로 선택하고, 없거나 모르면 defaultAgent. */
   adapters: Record<string, AgentAdapter>;
@@ -141,7 +139,6 @@ export class Worker {
   async processOne(): Promise<boolean> {
     const {
       client,
-      triage,
       gate,
       adapters,
       defaultAgent,
@@ -155,26 +152,19 @@ export class Worker {
 
     const { task, payload } = await client.claim(workerId, labels, leaseSeconds);
     if (!task) return false;
+    // 해석·분류는 서버가 이미 끝냈다. 여기서는 시작 여부만 판정한다.
+    const instruction = payload ?? '';
     this.currentTask = {
       taskId: task.id,
       label: task.label,
-      phase: 'triage',
+      phase: 'gate',
       startedAt: new Date().toISOString(),
     };
     activity.push('claimed', task.id, task.label);
     log.info({ taskId: task.id, label: task.label }, 'task claimed');
 
     try {
-      const triageResult = await triage.evaluate({ task, payload: payload ?? '' });
-      if (triageResult.verdict === 'drop') {
-        const reason = triageResult.reason ?? 'triage drop';
-        await client.report(task.id, { type: 'triaged_out', reason });
-        activity.push('triaged_out', task.id, reason);
-        return true;
-      }
-
-      this.setPhase('gate');
-      const decision = await gate.evaluate(task, triageResult);
+      const decision = await gate.evaluate(task, instruction);
       if (decision.verdict !== 'allow') {
         const reason = decision.reason ?? `start gate verdict: ${decision.verdict}`;
         await client.report(task.id, { type: 'rejected', reason });
@@ -201,7 +191,7 @@ export class Worker {
       void Promise.resolve(
         adapter.start({
           task,
-          instruction: triageResult.instruction ?? payload ?? '',
+          instruction,
           reportUrl: `${reportBaseUrl}/report/${task.id}`,
         }),
       ).catch((err) => {

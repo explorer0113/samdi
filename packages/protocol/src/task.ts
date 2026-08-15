@@ -6,8 +6,9 @@ import { z } from 'zod';
  * pending → claimed → running → completed
  *              │         │    ↘ failed
  *              │         ⇄ waiting (승인 대기, 거부 시 failed)
- *              ├→ triaged_out (Triage 기각)
  *              └→ rejected    (Start Gate 기각)
+ *
+ * 처리 가치 판단(noise)은 Task가 되기 전, 서버의 문맥 스레드에서 끝난다.
  *
  * claimed / running / waiting ─(lease 만료)→ stalled
  * stalled ─(사용자 재시도 승인)→ pending
@@ -19,7 +20,6 @@ export const taskStatusSchema = z.enum([
   'running',
   'waiting',
   'stalled',
-  'triaged_out',
   'rejected',
   'completed',
   'failed',
@@ -36,6 +36,8 @@ export const taskSchema = z.object({
   status: taskStatusSchema,
   /** 이 Task를 처리할 에이전트 이름. null이면 Worker의 기본 에이전트. pending 동안만 변경 가능. */
   agent: z.string().nullable(),
+  /** 이 Task를 낳은 문맥 스레드. passthrough 채널(해석 없이 직행)이면 null. */
+  threadId: z.string().nullable(),
   workerId: z.string().nullable(),
   leaseExpiresAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),

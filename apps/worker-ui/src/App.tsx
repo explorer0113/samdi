@@ -3,7 +3,6 @@ import type { TaskSummary } from '@samdi/protocol';
 import { api, type AgentsInfo, type TaskDetail, type UiState } from './api.js';
 
 const PHASE_LABEL: Record<string, string> = {
-  triage: '1차 판단 중',
   gate: 'Start Gate 판정 중',
   agent_running: '에이전트 실행 중',
   awaiting_approval: '승인 대기 중',

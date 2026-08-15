@@ -10,17 +10,29 @@ import {
 } from '@samdi/protocol';
 import { InvalidTransitionError } from '@samdi/task-domain';
 import type { Db } from './db.js';
+import type { Pipeline } from './pipeline.js';
 import { TaskNotFoundError, TaskNotPendingError, type TaskStore } from './task-store.js';
+import type { ThreadStore } from './thread-store.js';
 
 export interface ServerDeps {
   db: Db;
   store: TaskStore;
+  /** 수집기 → 해석기 → 분배기 */
+  pipeline: Pipeline;
+  threads: ThreadStore;
   /** MVP: Worker/관리 요청 공용 키. 개별 Worker 등록·키 발급은 이후 단계. */
   workerKey: string;
   logger?: boolean;
 }
 
-export function buildServer({ db, store, workerKey, logger = true }: ServerDeps) {
+export function buildServer({
+  db,
+  store,
+  pipeline,
+  threads,
+  workerKey,
+  logger = true,
+}: ServerDeps) {
   const app = Fastify({ logger });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -58,8 +70,23 @@ export function buildServer({ db, store, workerKey, logger = true }: ServerDeps)
       return reply.code(401).send({ error: 'invalid channel key' });
     }
     const body = ingestRequestSchema.parse(req.body);
-    const task = await store.createTask(channel.id, channel.label, body.payload, body.agent);
-    return { taskId: task.id };
+    return pipeline.ingest(channel.id, body.payload, {
+      agent: body.agent,
+      contextKey: body.contextKey,
+    });
+  });
+
+  /** 문맥 스레드 관찰용 (llm 모드 채널) */
+  app.get('/channels/:channelId/threads', { preHandler: requireWorkerKey }, async (req) => {
+    const { channelId } = req.params as { channelId: string };
+    return { threads: threads.listByChannel(channelId) };
+  });
+
+  app.get('/threads/:threadId', { preHandler: requireWorkerKey }, async (req, reply) => {
+    const { threadId } = req.params as { threadId: string };
+    const thread = threads.get(threadId);
+    if (!thread) return reply.code(404).send({ error: `thread not found: ${threadId}` });
+    return { thread, events: threads.events(threadId) };
   });
 
   app.post('/tasks/claim', { preHandler: requireWorkerKey }, async (req) => {

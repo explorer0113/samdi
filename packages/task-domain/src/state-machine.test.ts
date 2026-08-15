@@ -14,11 +14,10 @@ describe('task state machine', () => {
     expect(canTransition('waiting', 'failed')).toBe(true);
   });
 
-  it('허용: 기각은 claimed에서만, 두 종류로 구분', () => {
-    expect(canTransition('claimed', 'triaged_out')).toBe(true);
+  it('허용: Start Gate 기각은 claimed에서만', () => {
     expect(canTransition('claimed', 'rejected')).toBe(true);
     expect(canTransition('running', 'rejected')).toBe(false);
-    expect(canTransition('pending', 'triaged_out')).toBe(false);
+    expect(canTransition('pending', 'rejected')).toBe(false);
   });
 
   it('허용: lease 만료 → stalled, 이후엔 사용자 결정만', () => {
@@ -35,7 +34,7 @@ describe('task state machine', () => {
   });
 
   it('금지: 종결 상태에서는 어디로도 못 간다', () => {
-    for (const from of ['completed', 'failed', 'rejected', 'triaged_out'] as const) {
+    for (const from of ['completed', 'failed', 'rejected'] as const) {
       expect(isTerminal(from)).toBe(true);
       for (const to of ['pending', 'claimed', 'running', 'completed'] as const) {
         expect(canTransition(from, to)).toBe(false);

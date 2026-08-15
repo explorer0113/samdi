@@ -24,7 +24,9 @@ describe('loadServerConfig', () => {
     expect(config.port).toBe(3000);
     expect(config.dbPath).toBe('samdi.sqlite');
     expect(config.workerKey).toBe('demo-worker-key');
-    expect(config.channels).toEqual([{ id: 'demo', label: 'demo', key: 'demo-channel-key' }]);
+    expect(config.channels).toMatchObject([{ id: 'demo', label: 'demo', key: 'demo-channel-key' }]);
+    // LLM 없이 도는 게 기본값이다
+    expect(config.channels[0]?.interpreter.mode).toBe('passthrough');
   });
 
   it('samdi.server.yaml을 cwd에서 찾아 읽는다', () => {
@@ -42,7 +44,69 @@ channels:
     expect(source).toBe(file);
     expect(config.port).toBe(4000);
     expect(config.workerKey).toBe('from-file');
-    expect(config.channels).toEqual([{ id: 'mail', label: 'inbox', key: 'mail-key' }]);
+    expect(config.channels).toMatchObject([{ id: 'mail', label: 'inbox', key: 'mail-key' }]);
+  });
+
+  it('채널별 해석기 설정을 읽고, 생략한 키는 기본값을 유지한다', () => {
+    writeConfig(
+      'samdi.server.yaml',
+      `channels:
+  - id: mail
+    key: k
+    interpreter:
+      mode: claude
+      ttlSeconds: 600
+      labels: [coding, ops]
+      guidance: 이 채널은 고객 지원 메일이다.
+`,
+    );
+    const { config } = loadServerConfig({ cwd: dir, env: {} });
+    const interpreter = config.channels[0]!.interpreter;
+    expect(interpreter.mode).toBe('claude');
+    expect(interpreter.ttlSeconds).toBe(600);
+    expect(interpreter.labels).toEqual(['coding', 'ops']);
+    expect(interpreter.guidance).toBe('이 채널은 고객 지원 메일이다.');
+    expect(interpreter.debounceMs).toBe(2000); // 기본값 유지
+    expect(interpreter.claude.model).toBe('claude-opus-5'); // 기본값 유지
+    expect(interpreter.claude.effort).toBe('low');
+  });
+
+  it('프로바이더 블록과 프롬프트를 설정에서 바꾼다', () => {
+    writeConfig(
+      'samdi.server.yaml',
+      `channels:
+  - id: mail
+    key: k
+    interpreter:
+      mode: http
+      systemPrompt: |
+        완전히 다른 프롬프트
+      http:
+        url: http://127.0.0.1:11434/interpret
+        headers:
+          Authorization: Bearer t
+`,
+    );
+    const { config } = loadServerConfig({ cwd: dir, env: {} });
+    const interpreter = config.channels[0]!.interpreter;
+    expect(interpreter.mode).toBe('http');
+    expect(interpreter.http?.url).toBe('http://127.0.0.1:11434/interpret');
+    expect(interpreter.http?.headers).toEqual({ Authorization: 'Bearer t' });
+    expect(interpreter.http?.timeoutMs).toBe(30_000); // 기본값 유지
+    expect(interpreter.systemPrompt).toContain('완전히 다른 프롬프트');
+  });
+
+  it('모르는 해석기 모드는 키 이름과 함께 거부된다', () => {
+    writeConfig('samdi.server.yaml', 'channels:\n  - id: m\n    key: k\n    interpreter:\n      mode: gpt\n');
+    expect(() => loadServerConfig({ cwd: dir, env: {} })).toThrowError(/interpreter\.mode/);
+  });
+
+  it('http 모드인데 url이 없으면 거부된다', () => {
+    writeConfig(
+      'samdi.server.yaml',
+      'channels:\n  - id: m\n    key: k\n    interpreter:\n      mode: http\n      http:\n        headers: {}\n',
+    );
+    expect(() => loadServerConfig({ cwd: dir, env: {} })).toThrowError(/http\.url/);
   });
 
   it('환경변수가 설정 파일을 덮는다', () => {
@@ -66,9 +130,9 @@ channels:
 `,
     );
     const { config } = loadServerConfig({ cwd: dir, env: { SAMDI_CHANNEL_KEY: 'new' } });
-    expect(config.channels).toEqual([
-      { id: 'demo', key: 'new' },
-      { id: 'mail', key: 'keep-me' },
+    expect(config.channels.map((c) => [c.id, c.key])).toEqual([
+      ['demo', 'new'],
+      ['mail', 'keep-me'],
     ]);
   });
 

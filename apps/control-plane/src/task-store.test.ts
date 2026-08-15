@@ -54,12 +54,7 @@ describe('TaskStore', () => {
     ]);
   });
 
-  it('기각 두 종류는 상태로 구분된다', async () => {
-    const a = await store.createTask('demo', 'demo', 'a');
-    store.claimNext('w1', ['demo'], 600);
-    expect(store.applyReport(a.id, { type: 'triaged_out', reason: '스팸' }).status).toBe(
-      'triaged_out',
-    );
+  it('Start Gate 기각은 rejected로 마감된다', async () => {
     const b = await store.createTask('demo', 'demo', 'b');
     store.claimNext('w1', ['demo'], 600);
     expect(store.applyReport(b.id, { type: 'rejected', reason: '정책 위반' }).status).toBe(

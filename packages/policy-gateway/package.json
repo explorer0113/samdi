@@ -10,7 +10,6 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@samdi/protocol": "workspace:*",
-    "@samdi/triage": "workspace:*"
+    "@samdi/protocol": "workspace:*"
   }
 }

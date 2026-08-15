@@ -188,7 +188,6 @@ td.agent-cell .mono { color: var(--muted); font-size: 11.5px; }
 .chip.completed { background: var(--green-bg); color: var(--green); }
 .chip.failed { background: var(--red-bg); color: var(--red); }
 .chip.rejected { background: var(--gray-bg); color: var(--muted); }
-.chip.triaged_out { background: var(--gray-bg); color: var(--muted); }
 
 .detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .payload {

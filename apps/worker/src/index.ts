@@ -8,14 +8,14 @@ import {
   type AgentAdapter,
 } from '@samdi/agent-adapter';
 import { AllowAllStartGate } from '@samdi/policy-gateway';
-import { PassThroughTriage } from '@samdi/triage';
 import { ActivityLog } from './activity-log.js';
 import { ControlPlaneClient } from './control-plane-client.js';
 import { Worker } from './worker.js';
 
 /**
  * Worker 데몬 — 사용자 기기에서 돈다.
- * MVP 조합: PassThroughTriage → AllowAllStartGate → 어댑터 레지스트리.
+ * 흐름: claim → Start Gate → 어댑터 실행 → 로컬 보고 수신 → 결과 중계.
+ * 해석·분류는 서버가 끝냈으므로 여기서 LLM을 쓰지 않는다.
  *
  * 설정: samdi.worker.yaml (탐색 순서와 키는 docs/configuration.md 참조).
  * 설정 파일이 없어도 기본값으로 동작하고, 환경변수가 파일을 덮는다.
@@ -56,7 +56,6 @@ const adapters: Record<string, AgentAdapter> = {
 
 const worker = new Worker({
   client,
-  triage: new PassThroughTriage(),
   gate: new AllowAllStartGate(),
   adapters,
   defaultAgent,
