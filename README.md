@@ -115,6 +115,16 @@ pnpm dev
 로그를 `[cp]` `[worker]` `[ui]`로 구분해 보여준다. **Ctrl+C 한 번으로 셋 다 정리된다.**
 포트를 바꾸려면 `PORT=3001 SAMDI_REPORT_PORT=4701 UI_PORT=5174 pnpm dev`.
 
+컨테이너로 돌리려면 (서버·클라이언트 이미지 두 개):
+
+```sh
+docker compose up --build     # 대시보드 http://127.0.0.1:4700
+```
+
+`claude-code` 어댑터는 macOS Terminal을 열어야 해서 컨테이너 안에서는 못 쓴다.
+컨테이너 구성은 `mock`으로 파이프라인을 확인하는 용도이고, 실제 에이전트를 붙이려면
+서버만 컨테이너로 띄우고 Worker는 호스트에서 돌린다 — **[docs/docker.md](docs/docker.md)**.
+
 따로 띄우고 싶으면 터미널 세 개로:
 
 ```sh
@@ -179,6 +189,9 @@ cp samdi.worker.example.yaml samdi.worker.yaml   # Worker
 
 전체 키·환경변수 매핑·작업 레시피는 **[docs/configuration.md](docs/configuration.md)** 에 있다.
 사람과 코딩 에이전트가 같은 문서로 설정을 바꿀 수 있게 쓰였다.
+
+이 저장소에서 작업하는 코딩 에이전트를 위한 지침은 **[AGENTS.md](AGENTS.md)** 에 따로 있다 —
+깨뜨리면 안 되는 설계 제약과 자주 밟는 지뢰를 모아뒀다.
 
 ## 구조
 

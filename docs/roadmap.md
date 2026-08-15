@@ -45,10 +45,14 @@ samdi가 지금 무엇을 하고, 다음에 무엇을 할지. 개요는 [README]
 
 ### 배포
 
-- **Dockerize** — Control Plane / Worker 이미지, docker-compose로 로컬 한 방 실행.
-  Worker는 사용자 기기에서 도구에 접근해야 하므로 컨테이너 경계와 자격 증명 주입 방식을 먼저 정해야 한다
+- ~~**Dockerize**~~ — 이미지 둘(서버 / 클라이언트)과 `docker compose up` 완료.
+  [docs/docker.md](docker.md) 참조. 남은 문제는 **컨테이너 안에서 실제 에이전트를 못 돌린다**는 것이다:
+  `claude-code`는 macOS Terminal에 묶여 있고, 리눅스 컨테이너에는 로그인된 에이전트도 없다.
+  자격 증명 주입 방식과 headless 실행 경로를 정해야 이 칸이 채워진다
 - **Helm 차트** — 쿠버네티스에 Control Plane 배포 (서버는 상태만 소유하므로 컨테이너화가 자연스럽다).
   SQLite → 외부 DB 전환 여부가 여기서 갈린다
+- **이미지 경량화** — 지금은 소스를 `tsx`로 바로 실행해서 개발 의존성까지 들어간다(약 370MB).
+  빌드 산출물(JS)만 담으면 크게 줄어든다
 
 ### 신뢰성
 

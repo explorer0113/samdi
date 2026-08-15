@@ -186,6 +186,7 @@ export function loadWorkerConfig(opts: LoadOptions = {}): Loaded<WorkerConfig> {
         pollIntervalMs: env.SAMDI_POLL_INTERVAL_MS,
         leaseSeconds: env.SAMDI_LEASE_SECONDS,
         reportPort: env.SAMDI_REPORT_PORT,
+        reportHost: env.SAMDI_REPORT_HOST,
         concurrency: env.SAMDI_CONCURRENCY,
       },
       startGate: {
@@ -193,6 +194,7 @@ export function loadWorkerConfig(opts: LoadOptions = {}): Loaded<WorkerConfig> {
           ? env.SAMDI_REQUIRE_APPROVAL !== 'false'
           : undefined,
       },
+      uiDist: env.SAMDI_UI_DIST,
       defaultAgent: env.SAMDI_AGENT,
       agents: claudeOverride
         ? { 'claude-code': claudeOverride }

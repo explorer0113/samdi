@@ -1,0 +1,47 @@
+# samdi를 컨테이너 두 개로 띄운다 — 서버(Control Plane)와 클라이언트(Worker + 대시보드).
+#
+#   docker compose up --build
+#   → 대시보드 http://127.0.0.1:4700
+#
+# 이 구성은 `mock` 에이전트로 파이프라인 전체를 확인하기 위한 것이다.
+# 실제 에이전트(Claude Code)를 붙이려면 Worker는 호스트에서 띄운다 — docs/docker.md 참조.
+
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: apps/control-plane/Dockerfile
+    environment:
+      # 데모 기본값. 실제로 쓸 때는 반드시 바꾼다 (아래 "키" 주석 참조).
+      SAMDI_WORKER_KEY: demo-worker-key
+      SAMDI_CHANNEL_KEY: demo-channel-key
+    volumes:
+      # Task와 문맥 스레드가 여기 남는다. 지우면 상태가 사라진다.
+      - samdi-data:/data
+    ports:
+      # 채널이 웹훅을 보내는 곳. 3000은 흔히 쓰는 포트라 충돌하면
+      # SAMDI_CP_PORT=3001 docker compose up 처럼 바꾼다.
+      # 외부에 열려면 0.0.0.0으로 바꾸되, 그때는 채널 키를 반드시 실제 값으로 교체한다.
+      - '127.0.0.1:${SAMDI_CP_PORT:-3000}:3000'
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    depends_on:
+      - control-plane
+    environment:
+      SAMDI_CONTROL_PLANE_URL: http://control-plane:3000
+      SAMDI_WORKER_KEY: demo-worker-key
+      SAMDI_CHANNEL_KEY: demo-channel-key
+      SAMDI_WORKER_ID: worker-docker
+      SAMDI_LABELS: demo
+      # 컨테이너 안에서는 Terminal을 열 수 없다 — claude-code는 여기서 못 쓴다.
+      SAMDI_AGENT: mock
+    ports:
+      # 반드시 루프백에만 노출한다. 보고 API에는 인증이 없어서,
+      # 0.0.0.0으로 열면 같은 네트워크의 누구나 Task 완료를 위조할 수 있다.
+      - '127.0.0.1:${SAMDI_UI_PORT:-4700}:4700'
+
+volumes:
+  samdi-data:

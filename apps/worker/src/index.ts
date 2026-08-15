@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { ConfigError, loadWorkerConfig } from '@samdi/config';
 import { localReportSchema } from '@samdi/protocol';
@@ -34,8 +36,15 @@ const { config, source } = loaded;
 
 const controlPlaneUrl = config.controlPlane.url;
 const channelKey = config.controlPlane.channelKey;
-const { id: workerId, labels, pollIntervalMs, leaseSeconds, reportPort, concurrency } =
-  config.worker;
+const {
+  id: workerId,
+  labels,
+  pollIntervalMs,
+  leaseSeconds,
+  reportPort,
+  reportHost,
+  concurrency,
+} = config.worker;
 const defaultAgent = config.defaultAgent;
 
 const app = Fastify({ logger: true });
@@ -174,7 +183,19 @@ process.on('SIGTERM', () => {
 });
 
 async function main() {
-  await app.listen({ port: reportPort, host: '127.0.0.1' });
+  // 빌드된 UI를 같은 출처로 내보낸다 (설정된 경우에만).
+  // 개발 중에는 vite 개발 서버가 /ui를 여기로 프록시하므로 이 경로는 비어 있다.
+  // 명시 라우트(/ui/*, /report/*)가 정적 와일드카드보다 우선한다.
+  if (config.uiDist) {
+    if (!existsSync(config.uiDist)) {
+      app.log.error({ uiDist: config.uiDist }, 'uiDist 경로가 없다 — UI를 서빙하지 않는다');
+    } else {
+      await app.register(fastifyStatic, { root: config.uiDist });
+      app.log.info({ uiDist: config.uiDist }, 'serving worker-ui');
+    }
+  }
+
+  await app.listen({ port: reportPort, host: reportHost });
 
   // 이전 실행이 물고 있던 Task를 정리한다. 재시작하면 에이전트도 승인 대기도
   // 사라지므로, 그대로 두면 waiting에 멈춘 채 승인 버튼도 없는 상태가 된다.
@@ -198,7 +219,7 @@ async function main() {
       workerId,
       labels,
       defaultAgent,
-      reportPort,
+      listen: `${reportHost}:${reportPort}`,
       concurrency,
       requireApproval: config.startGate.requireApproval,
     },

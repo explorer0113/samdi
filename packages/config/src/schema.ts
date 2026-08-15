@@ -149,8 +149,16 @@ export const workerConfigSchema = z.object({
       labels: labelsSchema.default(['demo']),
       pollIntervalMs: z.coerce.number().int().positive().default(2000),
       leaseSeconds: z.coerce.number().int().positive().max(3600).default(600),
-      /** 로컬 보고 API + UI용 API 포트 (루프백 전용) */
+      /** 로컬 보고 API + UI용 API 포트 */
       reportPort: z.coerce.number().int().positive().max(65535).default(4700),
+      /**
+       * 보고 API를 바인드할 주소. 기본은 루프백 전용이다 —
+       * 보고 API에는 인증이 없으므로 기기 밖에서 닿으면 안 된다.
+       *
+       * 컨테이너 안에서는 네임스페이스가 격리돼 있어 0.0.0.0으로 열어야 하고,
+       * 대신 호스트 쪽에서 `-p 127.0.0.1:4700:4700`으로 루프백에만 노출한다.
+       */
+      reportHost: z.string().min(1).default('127.0.0.1'),
       /**
        * 동시에 처리할 Task 수.
        * 1이면 앞선 Task가 끝나야 다음을 집는다 — 터미널 에이전트처럼 사람을
@@ -172,6 +180,12 @@ export const workerConfigSchema = z.object({
       autoPassChannels: z.array(z.string().min(1)).default([]),
     })
     .default({}),
+  /**
+   * 빌드된 worker-ui(dist)를 서빙할 경로. 있으면 Worker가 `/`로 직접 내보낸다.
+   * 개발 중에는 vite 개발 서버를 쓰므로 비워두고, 컨테이너에서는 이미지에 구운
+   * dist 경로를 준다 — UI와 API가 같은 출처라 프록시 설정이 필요 없다.
+   */
+  uiDist: pathString.optional(),
   /** Task에 agent 지정이 없을 때 쓸 에이전트 */
   defaultAgent: z.enum(['mock', 'claude-code']).default('mock'),
   agents: z

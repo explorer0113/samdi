@@ -1,3 +1,8 @@
+/* eslint-disable prefer-const --
+ * 어댑터가 자기를 실행한 Worker에게 보고해야 해서 순환 참조가 된다:
+ * 어댑터 클로저가 workerRef를 먼저 참조하고, Worker는 그 어댑터를 받아 나중에 만들어진다.
+ * 그래서 선언과 대입이 떨어져 있어야 하고 const로는 표현할 수 없다.
+ */
 import { describe, expect, it } from 'vitest';
 import type { Task, TaskReport } from '@samdi/protocol';
 import type { AgentAdapter } from '@samdi/agent-adapter';

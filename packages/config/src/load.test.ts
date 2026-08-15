@@ -158,6 +158,24 @@ describe('loadWorkerConfig', () => {
     expect(config.agents['claude-code'].timeoutMs).toBe(600_000);
   });
 
+  it('보고 API는 기본적으로 루프백에만 바인딩한다', () => {
+    // 이 API에는 인증이 없다. 기본값이 열리는 순간 아무나 완료를 위조할 수 있으므로
+    // 명시적으로 고정한다.
+    const { config } = loadWorkerConfig({ cwd: dir, env: {} });
+    expect(config.worker.reportHost).toBe('127.0.0.1');
+  });
+
+  it('SAMDI_REPORT_HOST로 바인드 주소를 바꾼다 (컨테이너용)', () => {
+    const { config } = loadWorkerConfig({ cwd: dir, env: { SAMDI_REPORT_HOST: '0.0.0.0' } });
+    expect(config.worker.reportHost).toBe('0.0.0.0');
+  });
+
+  it('uiDist는 기본적으로 비어 있고, 주면 ~를 펼친다', () => {
+    expect(loadWorkerConfig({ cwd: dir, env: {} }).config.uiDist).toBeUndefined();
+    const { config } = loadWorkerConfig({ cwd: dir, env: { SAMDI_UI_DIST: '~/dist' } });
+    expect(config.uiDist).toBe(path.join(os.homedir(), 'dist'));
+  });
+
   it('중첩 키를 파일에서 읽고, 지정하지 않은 형제 키는 기본값을 유지한다', () => {
     writeConfig(
       'samdi.worker.yaml',

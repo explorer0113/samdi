@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.3",
     "@samdi/agent-adapter": "workspace:*",
     "@samdi/config": "workspace:*",
     "@samdi/policy-gateway": "workspace:*",

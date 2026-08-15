@@ -151,8 +151,10 @@ samdi가 보내는 요청:
 | `worker.labels` | 문자열 배열 | `[demo]` | 이 Worker가 claim할 라벨 목록. 채널의 `label`과 맞아야 한다 |
 | `worker.pollIntervalMs` | 양의 정수 | `2000` | claim 폴링 주기 |
 | `worker.leaseSeconds` | 1–3600 | `600` | lease 길이. 이 시간 안에 보고가 없으면 서버가 `stalled`로 옮긴다 |
-| `worker.reportPort` | 정수 1–65535 | `4700` | 로컬 보고 API + UI용 API 포트(루프백 전용) |
+| `worker.reportPort` | 정수 1–65535 | `4700` | 로컬 보고 API + UI용 API 포트 |
+| `worker.reportHost` | 문자열 | `127.0.0.1` | 보고 API를 바인드할 주소. **기본값에서 바꾸지 않는 게 맞다** — 보고 API에는 인증이 없어서, 열면 아무나 완료를 위조하고 승인 질문에 답할 수 있다. 컨테이너에서만 `0.0.0.0`으로 두고 노출은 호스트의 `-p 127.0.0.1:...`이 막는다([Docker 문서](docker.md)) |
 | `worker.concurrency` | 1–32 | `1` | 동시에 처리할 Task 수. 1이면 앞선 Task가 끝나야 다음을 집는다 — 사람을 기다리는 작업이 있으면 그 뒤가 전부 밀린다 |
+| `uiDist` | 경로 | (없음) | 빌드된 대시보드(`apps/worker-ui/dist`) 경로. 주면 Worker가 `/`로 직접 서빙한다. 개발 중에는 vite 개발 서버를 쓰므로 비워둔다 |
 | `startGate.requireApproval` | 불리언 | `true` | 시작 전 사람 승인을 받는다. 에이전트 종류와 무관하게 Worker가 강제한다 |
 | `startGate.autoPassLabels` | 문자열 배열 | `[]` | 승인 없이 통과시킬 라벨 |
 | `startGate.autoPassChannels` | 문자열 배열 | `[]` | 승인 없이 통과시킬 채널 |
@@ -200,7 +202,9 @@ samdi가 보내는 요청:
 | `SAMDI_POLL_INTERVAL_MS` | `worker.pollIntervalMs` |
 | `SAMDI_LEASE_SECONDS` | `worker.leaseSeconds` |
 | `SAMDI_REPORT_PORT` | `worker.reportPort` |
+| `SAMDI_REPORT_HOST` | `worker.reportHost` |
 | `SAMDI_CONCURRENCY` | `worker.concurrency` |
+| `SAMDI_UI_DIST` | `uiDist` |
 | `SAMDI_REQUIRE_APPROVAL` | `startGate.requireApproval` (`false`면 끔) |
 | `SAMDI_AGENT` | `defaultAgent` |
 | `SAMDI_CLAUDE_BIN` | `agents.claude-code.bin` |

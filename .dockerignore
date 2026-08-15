@@ -1,0 +1,25 @@
+# 이미지 안에서 다시 설치·빌드하므로 호스트 산출물은 넣지 않는다.
+# (호스트가 macOS면 better-sqlite3 네이티브 바이너리가 리눅스에서 못 돈다)
+node_modules
+**/node_modules
+dist
+**/dist
+
+.git
+.gitignore
+
+*.sqlite
+*.sqlite-*
+*.log
+.DS_Store
+
+# 키가 들어 있는 실제 설정 — 이미지에 굽지 말고 마운트하거나 환경변수로 준다
+.env
+.env.*
+samdi.server.yaml
+samdi.worker.yaml
+
+SOP.md
+docs
+README.md
+LICENSE
