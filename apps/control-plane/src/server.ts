@@ -14,6 +14,7 @@ import {
 import { InvalidTransitionError } from '@samdi/task-domain';
 import {
   ChannelExistsError,
+  ChannelInUseError,
   ChannelNotEditableError,
   ChannelNotFoundError,
   type ChannelRegistry,
@@ -69,6 +70,10 @@ export function buildServer({
     }
     if (err instanceof ChannelExistsError) {
       return reply.code(409).send({ error: err.message });
+    }
+    // 화면이 "Task N건이 함께 지워집니다"라고 물어볼 수 있게 개수를 함께 준다.
+    if (err instanceof ChannelInUseError) {
+      return reply.code(409).send({ error: err.message, refs: err.refs });
     }
     if (err instanceof ChannelNotEditableError) {
       return reply.code(403).send({ error: err.message });
@@ -280,13 +285,27 @@ export function buildServer({
   });
 
   /**
-   * 채널 비활성화 — 이벤트 수신을 멈춘다. 목록에는 남는다.
-   * 완전히 지우지 않는 이유는 Task·스레드가 채널을 참조하는 감사 기록이기 때문이다.
+   * 비활성화 — 이벤트 수신만 멈춘다. 채널도 그 채널이 만든 기록도 남는다.
+   * "이 채널은 이제 안 쓴다"에는 이쪽이 맞다.
    */
-  app.delete('/admin/channels/:channelId', admin, async (req) => {
+  app.post('/admin/channels/:channelId/disable', admin, async (req) => {
     const { channelId } = req.params as { channelId: string };
     channels.disable(channelId);
     return { ok: true };
+  });
+
+  /**
+   * 삭제 — 목록에서 없앤다.
+   *
+   * 참조하는 기록이 없으면 그냥 지운다. 있으면 409로 거부하면서 무엇이 걸려 있는지
+   * 알려준다 — 그때는 비활성화하거나 `?purge=true`로 기록째 지운다.
+   * **purge는 되돌릴 수 없다.**
+   */
+  app.delete('/admin/channels/:channelId', admin, async (req) => {
+    const { channelId } = req.params as { channelId: string };
+    const { purge } = req.query as { purge?: string };
+    const removed = channels.remove(channelId, { purge: purge === 'true' });
+    return { ok: true, removed };
   });
 
   /**

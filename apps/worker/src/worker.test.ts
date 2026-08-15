@@ -52,7 +52,7 @@ function mkWorker(overrides: Partial<WorkerDeps>): Worker {
     defaultAgent: 'mock',
     activity: new ActivityLog(),
     workerId: 'w1',
-    labels: ['demo'],
+    labels: () => ['demo'],
     leaseSeconds: 0.2, // 테스트에선 200ms lease
     reportBaseUrl: 'http://127.0.0.1:0',
     log: noopLog,

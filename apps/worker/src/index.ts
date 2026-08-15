@@ -7,6 +7,7 @@ import { ClaudeCodeAdapter, MockAgentAdapter, type AgentAdapter } from '@samdi/a
 import { ApprovalStartGate } from '@samdi/policy-gateway';
 import { ActivityLog } from './activity-log.js';
 import { ControlPlaneClient } from './control-plane-client.js';
+import { LabelStore } from './labels.js';
 import { Worker } from './worker.js';
 
 /**
@@ -37,7 +38,7 @@ const { config, source } = loaded;
 const controlPlaneUrl = config.controlPlane.url;
 const {
   id: workerId,
-  labels,
+  labels: configuredLabels,
   pollIntervalMs,
   leaseSeconds,
   reportPort,
@@ -45,6 +46,10 @@ const {
   concurrency,
 } = config.worker;
 const defaultAgent = config.defaultAgent;
+
+// 어떤 라벨의 일을 받을지는 이 기기의 결정이다 — 화면에서 바꿀 수 있고,
+// 설정 파일 값은 기준값으로 남아 언제든 되돌릴 수 있다.
+const labelStore = new LabelStore(configuredLabels);
 
 const app = Fastify({ logger: true });
 const activity = new ActivityLog();
@@ -64,7 +69,7 @@ const worker = new Worker({
   defaultAgent,
   activity,
   workerId,
-  labels,
+  labels: () => labelStore.get(),
   leaseSeconds,
   reportBaseUrl: `http://127.0.0.1:${reportPort}`,
   log: app.log,
@@ -91,10 +96,31 @@ app.post('/report/:taskId', async (req, reply) => {
   return { ok: true };
 });
 
+/**
+ * 이 Worker가 받을 라벨을 바꾼다. 다음 claim부터 적용된다 — 재시작이 필요 없다.
+ * 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고 매번 재시작할 수는 없다.
+ */
+app.post('/ui/labels', async (req, reply) => {
+  const { labels: next, reset } = (req.body ?? {}) as { labels?: unknown; reset?: boolean };
+  try {
+    if (reset) return { labels: labelStore.reset(), overridden: false };
+    if (!Array.isArray(next) || next.some((l) => typeof l !== 'string')) {
+      return reply.code(400).send({ error: 'labels는 문자열 배열이어야 한다' });
+    }
+    const applied = labelStore.set(next as string[]);
+    activity.push('labels:changed', undefined, applied.join(', '));
+    return { labels: applied, overridden: labelStore.overridden };
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 /** worker-ui용 로컬 API */
 app.get('/ui/state', async () => ({
   workerId,
-  labels,
+  labels: labelStore.get(),
+  configuredLabels: labelStore.configured,
+  labelsOverridden: labelStore.overridden,
   controlPlaneUrl,
   current: worker.current,
   approvals: worker.approvals,
@@ -200,7 +226,7 @@ async function main() {
       config: source ?? '(기본값)',
       controlPlaneUrl,
       workerId,
-      labels,
+      labels: labelStore.get(),
       defaultAgent,
       listen: `${reportHost}:${reportPort}`,
       concurrency,

@@ -122,6 +122,8 @@ export function App() {
 
       <div className="grid">
         <div className="stack">
+          {state && <Labels state={state} onError={setError} onChanged={refresh} />}
+
           <section className="card">
             <h2>지금 처리 중 {state ? `(${state.current.length}/${state.concurrency})` : ''}</h2>
             {state && state.current.length > 0 ? (
@@ -302,5 +304,113 @@ export function App() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * 이 Worker가 받을 라벨. 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고
+ * 매번 재시작할 수는 없다. 바꾸면 다음 claim부터 적용된다.
+ *
+ * 라벨을 여기서 정하는 이유는 이게 **이 기기의 결정**이기 때문이다 —
+ * 무슨 일을 받을지는 자격 증명과 도구를 가진 쪽이 정한다.
+ */
+function Labels({
+  state,
+  onError,
+  onChanged,
+}: {
+  state: UiState;
+  onError: (msg: string) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const start = () => {
+    setDraft(state.labels.join(', '));
+    setEditing(true);
+  };
+
+  const save = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.setLabels(draft.split(',').map((l) => l.trim()).filter(Boolean));
+      setEditing(false);
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    try {
+      await api.resetLabels();
+      setEditing(false);
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>받는 라벨</h2>
+        {!editing && (
+          <button className="small" onClick={start}>
+            변경
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <>
+          <div className="inject">
+            <input
+              value={draft}
+              placeholder="콤마로 구분 (예: demo, mail)"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                // 한글 IME 조합 확정 시 keydown이 한 번 더 오므로 걸러야 두 번 저장되지 않는다
+                if (e.key === 'Enter' && !e.nativeEvent.isComposing) void save();
+                if (e.key === 'Escape') setEditing(false);
+              }}
+            />
+            <button className="primary" disabled={busy} onClick={() => void save()}>
+              저장
+            </button>
+            <button className="small" onClick={() => setEditing(false)}>
+              취소
+            </button>
+          </div>
+          <p className="hint">
+            채널의 <b>label</b>과 맞아야 그 채널의 Task를 가져옵니다. 저장하면 다음 claim부터
+            적용됩니다 — 재시작할 필요 없습니다.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="label-chips">
+            {state.labels.map((l) => (
+              <span className="chip running" key={l}>
+                {l}
+              </span>
+            ))}
+          </div>
+          {state.labelsOverridden && (
+            <p className="hint">
+              설정 파일 값(<code>{state.configuredLabels.join(', ')}</code>)과 다릅니다.{' '}
+              <button className="small" onClick={() => void reset()}>
+                설정값으로 되돌리기
+              </button>
+            </p>
+          )}
+        </>
+      )}
+    </section>
   );
 }

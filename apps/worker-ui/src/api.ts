@@ -22,7 +22,12 @@ export interface PendingApproval {
 
 export interface UiState {
   workerId: string;
+  /** 지금 claim에 쓰는 라벨 */
   labels: string[];
+  /** 설정 파일에 적힌 값. "되돌리기"의 목적지다. */
+  configuredLabels: string[];
+  /** 설정값과 다른 값을 쓰고 있는가 */
+  labelsOverridden: boolean;
   controlPlaneUrl: string;
   /** 동시에 처리 중인 Task들 */
   current: CurrentTask[];
@@ -72,4 +77,8 @@ export const api = {
     post<{ task: Task }>(`/ui/tasks/${id}/resolve`, { action }),
   approve: (id: string, decision: 'approve' | 'deny') =>
     post<{ ok: boolean }>(`/ui/tasks/${id}/approve`, { decision }),
+  /** 받을 라벨을 바꾼다. 다음 claim부터 적용된다 — 재시작이 필요 없다. */
+  setLabels: (labels: string[]) =>
+    post<{ labels: string[]; overridden: boolean }>('/ui/labels', { labels }),
+  resetLabels: () => post<{ labels: string[]; overridden: boolean }>('/ui/labels', { reset: true }),
 };

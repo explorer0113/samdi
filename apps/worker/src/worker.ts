@@ -74,7 +74,11 @@ export interface WorkerDeps {
   defaultAgent: string;
   activity: ActivityLog;
   workerId: string;
-  labels: string[];
+  /**
+   * claim할 라벨을 매번 읽어온다 — 고정 배열이 아니라 함수인 이유는
+   * 사용자가 화면에서 바꿀 수 있어야 하기 때문이다(재시작 없이 다음 claim부터 적용).
+   */
+  labels: () => string[];
   leaseSeconds: number;
   /** 로컬 보고 API의 베이스 URL. 에이전트 의뢰 시 `${reportBaseUrl}/report/:taskId`를 알려준다. */
   reportBaseUrl: string;
@@ -170,7 +174,7 @@ export class Worker {
       log,
     } = this.deps;
 
-    const { task, payload } = await client.claim(workerId, labels, leaseSeconds);
+    const { task, payload } = await client.claim(workerId, labels(), leaseSeconds);
     if (!task) return false;
     // 해석·분류는 서버가 이미 끝냈다. 여기서는 시작 여부만 판정한다.
     const instruction = payload ?? '';

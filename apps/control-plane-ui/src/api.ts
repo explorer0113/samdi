@@ -29,6 +29,20 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/**
+ * 지우려는 채널을 Task·스레드가 참조 중이다.
+ * 몇 건인지 들고 있어서, 화면이 "이만큼 함께 지워집니다"라고 물어볼 수 있다.
+ */
+export class ChannelInUseError extends Error {
+  constructor(
+    message: string,
+    readonly refs: { tasks: number; threads: number },
+  ) {
+    super(message);
+    this.name = 'ChannelInUseError';
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const key = loadKey();
   const res = await fetch(path, {
@@ -39,8 +53,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (res.status === 401) throw new UnauthorizedError();
-  if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    if (res.status === 409) {
+      const parsed = safeJson(body) as { error?: string; refs?: { tasks: number; threads: number } };
+      if (parsed?.refs) throw new ChannelInUseError(parsed.error ?? body, parsed.refs);
+    }
+    throw new Error(`${path}: ${res.status} ${body}`);
+  }
   return res.json() as Promise<T>;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 const get = <T>(path: string) => request<T>(path);
@@ -97,8 +126,17 @@ export const api = {
   createChannel: (body: { id: string; label?: string; interpreter?: unknown }) =>
     post<{ channel: ChannelRow; key: string }>('/admin/channels', body),
   rotateKey: (id: string) => post<{ key: string }>(`/admin/channels/${id}/key`),
-  disableChannel: (id: string) =>
-    request<{ ok: boolean }>(`/admin/channels/${id}`, { method: 'DELETE' }),
+  /** 수신만 멈춘다. 채널도 그 채널이 만든 기록도 남는다. */
+  disableChannel: (id: string) => post<{ ok: boolean }>(`/admin/channels/${id}/disable`),
+  /**
+   * 목록에서 없앤다. 참조하는 기록이 있으면 ChannelInUseError를 던지므로,
+   * 화면이 몇 건인지 보여주고 확인받은 뒤 purge로 다시 부른다.
+   */
+  deleteChannel: (id: string, purge = false) =>
+    request<{ ok: boolean; removed: { tasks: number; threads: number } }>(
+      `/admin/channels/${id}${purge ? '?purge=true' : ''}`,
+      { method: 'DELETE' },
+    ),
   /** 채널이 제대로 도는지 확인하는 도구. 관리 키로 채널 키 없이 넣는다. */
   inject: (channelId: string, payload: string) =>
     post<{ taskId: string | null; threadId: string | null }>(

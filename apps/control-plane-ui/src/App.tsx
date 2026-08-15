@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { TaskSummary } from '@samdi/protocol';
 import {
   api,
+  ChannelInUseError,
   clearKey,
   loadKey,
   saveKey,
@@ -395,6 +396,35 @@ function Channels({
     }
   };
 
+  /**
+   * 삭제. 걸린 기록이 없으면 바로 지우고, 있으면 서버가 몇 건인지 알려주므로
+   * 그걸 보여주고 확인받은 뒤에만 기록째 지운다 (되돌릴 수 없다).
+   */
+  const remove = async (id: string) => {
+    try {
+      await api.deleteChannel(id);
+      await onChanged();
+    } catch (err) {
+      if (!(err instanceof ChannelInUseError)) return onError(err);
+      const { tasks, threads } = err.refs;
+      const what = [
+        tasks > 0 ? `Task ${tasks}건(본문·감사 이벤트 포함)` : null,
+        threads > 0 ? `문맥 스레드 ${threads}건` : null,
+      ]
+        .filter(Boolean)
+        .join('과 ');
+      if (!confirm(`"${id}"를 지우면 ${what}도 함께 사라집니다.\n되돌릴 수 없습니다. 계속할까요?`)) {
+        return;
+      }
+      try {
+        await api.deleteChannel(id, true);
+        await onChanged();
+      } catch (err2) {
+        onError(err2);
+      }
+    }
+  };
+
   const inject = async () => {
     if (!injectTo || !payload.trim()) return;
     try {
@@ -517,11 +547,24 @@ function Channels({
                       <button className="small" onClick={() => void rotate(c.id)}>
                         키 재발급
                       </button>{' '}
-                      <button className="small danger" onClick={() => void disable(c.id)}>
+                      <button
+                        className="small"
+                        title="이벤트 수신만 멈춥니다. 기록은 남습니다."
+                        onClick={() => void disable(c.id)}
+                      >
                         비활성화
                       </button>{' '}
                     </>
                   )}
+                  {c.source === 'api' && (
+                    <button
+                      className="small danger"
+                      title="목록에서 없앱니다. 걸린 기록이 있으면 먼저 알려줍니다."
+                      onClick={() => void remove(c.id)}
+                    >
+                      삭제
+                    </button>
+                  )}{' '}
                   {!c.disabledAt && (
                     <button
                       className="small"
@@ -556,8 +599,8 @@ function Channels({
 
       <p className="hint">
         설정 파일(<code>samdi.server.yaml</code>)에서 온 채널은 파일이 진실이라 여기서 바꿀 수
-        없습니다. 비활성화한 채널은 이벤트를 받지 않지만, 이미 만들어진 Task가 참조하므로 목록에는
-        남습니다.
+        없습니다. <b>비활성화</b>는 수신만 멈추고 기록을 남기고, <b>삭제</b>는 목록에서
+        없앱니다 — 걸린 Task가 있으면 무엇이 함께 지워지는지 먼저 알려줍니다.
       </p>
     </section>
   );

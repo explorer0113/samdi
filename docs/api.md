@@ -153,15 +153,45 @@ curl -X POST "$CP/admin/channels/mail/key" -H "$ADMIN"
 
 **예전 키는 그 즉시 막힌다.** 그 키를 쓰던 웹훅은 `401`을 받기 시작하므로 같이 바꿔야 한다.
 
-### 비활성화
+### 비활성화와 삭제 — 다른 것이다
+
+**비활성화**는 수신만 멈춘다. 채널도, 그 채널이 만든 Task도 남는다.
+"이 채널은 이제 안 쓴다"에는 이쪽이 맞다.
+
+```sh
+curl -X POST "$CP/admin/channels/mail/disable" -H "$ADMIN"
+```
+
+목록에는 `disabledAt`이 찍힌 채로 남고, **같은 id로 다시 등록하면 새 키로 되살아난다.**
+
+**삭제**는 목록에서 없앤다. 걸린 기록이 없으면 그냥 지워진다:
 
 ```sh
 curl -X DELETE "$CP/admin/channels/mail" -H "$ADMIN"
 ```
 
-**실제로 지우지 않는다.** Task와 문맥 스레드가 채널을 참조하는 감사 기록이라, 지우면
-"이 Task가 어디서 왔는가"를 잃는다. 비활성화된 채널은 이벤트를 받지 않지만 목록에는
-`disabledAt`이 찍힌 채로 남고, **같은 id로 다시 등록하면 새 키로 되살아난다.**
+```json
+{ "ok": true, "removed": { "tasks": 0, "threads": 0 } }
+```
+
+걸린 기록이 있으면 **409로 거부하면서 몇 건인지 알려준다** — 화면이 "이만큼 함께
+지워집니다"라고 물어볼 수 있게:
+
+```json
+{
+  "error": "이 채널을 참조하는 기록이 있다: mail (Task 12건, 문맥 스레드 3건). …",
+  "refs": { "tasks": 12, "threads": 3 }
+}
+```
+
+기록째 지우려면 `purge`를 준다. **되돌릴 수 없다** — Task와 감사 이벤트, 본문,
+문맥 스레드가 함께 사라진다:
+
+```sh
+curl -X DELETE "$CP/admin/channels/mail?purge=true" -H "$ADMIN"
+```
+
+기록을 남기고 싶으면 삭제 대신 비활성화를 쓴다.
 
 ### 채널이 도는지 확인 (키 없이 넣어보기)
 
@@ -350,7 +380,7 @@ curl -X POST "$WORKER/report/$TASK_ID" -H "$JSON" \
 ### Worker UI가 쓰는 것
 
 ```sh
-curl "$WORKER/ui/state"                                    # 진행 중 + 승인 대기 + 활동 로그
+curl "$WORKER/ui/state"                                    # 진행 중 + 승인 대기 + 라벨 + 활동 로그
 curl "$WORKER/ui/agents"                                   # 쓸 수 있는 어댑터 목록
 curl "$WORKER/ui/tasks"                                    # Control Plane 프록시 (키는 Worker에만)
 curl -X POST "$WORKER/ui/tasks/$TASK_ID/approve" -H "$JSON" -d '{"decision":"approve"}'
@@ -359,6 +389,29 @@ curl -X POST "$WORKER/ui/tasks/$TASK_ID/resolve" -H "$JSON" -d '{"action":"retry
 
 `/ui/*`가 Control Plane을 프록시하는 이유는 **브라우저에 키를 주지 않기 위해서다.**
 Worker가 자기 키로 대신 부른다.
+
+### 받을 라벨 바꾸기 — 재시작 없이
+
+```sh
+curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"labels":["demo","mail"]}'
+curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"reset":true}'   # 설정 파일 값으로
+```
+
+```json
+{ "labels": ["demo", "mail"], "overridden": true }
+```
+
+**다음 claim부터 적용된다.** 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고 매번
+재시작할 수는 없다. 무슨 일을 받을지는 자격 증명과 도구를 가진 쪽이 정하는 것이므로
+이 결정은 Worker에 있다.
+
+바꾼 값은 `~/.samdi/worker-labels.json`에 남아 재시작해도 유지된다. 설정 파일(YAML)은
+건드리지 않는다 — 손으로 적은 설정과 화면에서 만진 값이 한 파일에서 섞이면 무엇이
+진실인지 알 수 없게 되기 때문이다. `/ui/state`가 둘을 함께 준다(`labels`,
+`configuredLabels`, `labelsOverridden`).
+
+> 서버가 이 변경을 알게 되는 건 **다음 claim 때**다. Worker가 일을 처리하는 동안에는
+> 폴링을 쉬므로, 그동안은 관리 화면의 `coveredLabels`가 옛 값으로 보인다.
 
 ---
 
@@ -418,4 +471,4 @@ curl -s "$CP/tasks/$TASK" -H "$ADMIN" | jq '{status: .task.status, events: [.eve
 | `401` | 키가 없거나 틀리다 (채널은 "없는 채널"도 여기로 뭉뚱그린다) |
 | `403` | 설정 파일에서 온 채널을 관리 API로 바꾸려 했다 |
 | `404` | 없는 Task·스레드 |
-| `409` | 상태 머신이 허용하지 않는 전이, 또는 이미 있는 채널 id |
+| `409` | 상태 머신이 허용하지 않는 전이 / 이미 있는 채널 id / 걸린 기록이 있는 채널 삭제(`refs` 동봉) |

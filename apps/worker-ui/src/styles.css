@@ -232,3 +232,15 @@ tbody tr.question-row td {
   margin-bottom: 12px;
   font-size: 13px;
 }
+
+/* 받는 라벨 */
+.card-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.card-head h2 { margin: 0; }
+.card-head button { margin-left: auto; }
+.label-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--gray-bg);
+  border-radius: 4px;
+  padding: 1px 5px;
+}

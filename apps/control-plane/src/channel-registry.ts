@@ -39,6 +39,24 @@ export class ChannelNotEditableError extends Error {
   }
 }
 
+/**
+ * 지우려는 채널을 Task·스레드가 참조하고 있다.
+ * 그냥 지우면 그 기록들이 "어디서 온 일인지"를 잃으므로, 무엇이 함께 사라지는지
+ * 알려주고 사용자가 정하게 한다 (비활성화하거나, 기록째 purge하거나).
+ */
+export class ChannelInUseError extends Error {
+  constructor(
+    id: string,
+    readonly refs: { tasks: number; threads: number },
+  ) {
+    super(
+      `이 채널을 참조하는 기록이 있다: ${id} (Task ${refs.tasks}건, 문맥 스레드 ${refs.threads}건). ` +
+        `기록을 남기려면 비활성화하고, 기록까지 지우려면 purge로 삭제할 것.`,
+    );
+    this.name = 'ChannelInUseError';
+  }
+}
+
 /** 채널 키. 앞의 `ch_`는 로그에서 이게 무슨 키인지 알아보라고 붙인다. */
 export function generateChannelKey(): string {
   return `ch_${randomBytes(24).toString('base64url')}`;
@@ -249,6 +267,70 @@ export class ChannelRegistry {
       .prepare('UPDATE channels SET disabled_at = ? WHERE id = ?')
       .run(new Date().toISOString(), channelId);
     this.runtimes.delete(channelId);
+  }
+
+  /** 이 채널을 참조하는 기록 수. 삭제해도 되는지 판단하는 근거다. */
+  references(channelId: string): { tasks: number; threads: number } {
+    const count = (sql: string) =>
+      (this.db.prepare(sql).get(channelId) as { n: number }).n;
+    return {
+      tasks: count('SELECT COUNT(*) AS n FROM tasks WHERE channel_id = ?'),
+      threads: count('SELECT COUNT(*) AS n FROM context_threads WHERE channel_id = ?'),
+    };
+  }
+
+  /**
+   * 채널을 지운다.
+   *
+   * 참조하는 기록이 없으면 흔적 없이 지운다 — 잘못 만든 채널이 목록에 영영 남을
+   * 이유는 없다. 참조가 있으면 기본적으로 거부하고(ChannelInUseError) 무엇이
+   * 걸려 있는지 알려준다. `purge`를 주면 그 기록들까지 함께 지운다.
+   *
+   * **purge는 되돌릴 수 없다.** Task와 감사 이벤트, 본문, 문맥 스레드가 사라진다.
+   * 기록을 남기면서 수신만 멈추려면 `disable`을 쓴다.
+   */
+  remove(channelId: string, opts: { purge?: boolean } = {}): { tasks: number; threads: number } {
+    const row = this.db.prepare('SELECT source FROM channels WHERE id = ?').get(channelId) as
+      | { source: string }
+      | undefined;
+    if (!row) throw new ChannelNotFoundError(channelId);
+    if (row.source !== 'api') throw new ChannelNotEditableError(channelId);
+
+    const refs = this.references(channelId);
+    const hasRefs = refs.tasks > 0 || refs.threads > 0;
+    if (hasRefs && !opts.purge) throw new ChannelInUseError(channelId, refs);
+
+    // 외래 키 순서대로 지운다. payloads는 tasks가 참조하므로 tasks를 먼저 지우고,
+    // 어떤 payload를 지울지는 그 전에 모아둬야 한다.
+    const purgeAll = this.db.transaction(() => {
+      const payloadRefs = (
+        this.db
+          .prepare('SELECT payload_ref FROM tasks WHERE channel_id = ?')
+          .all(channelId) as { payload_ref: string }[]
+      ).map((r) => r.payload_ref);
+
+      this.db
+        .prepare(
+          'DELETE FROM task_events WHERE task_id IN (SELECT id FROM tasks WHERE channel_id = ?)',
+        )
+        .run(channelId);
+      this.db.prepare('DELETE FROM tasks WHERE channel_id = ?').run(channelId);
+
+      const deletePayload = this.db.prepare('DELETE FROM payloads WHERE ref = ?');
+      for (const ref of payloadRefs) deletePayload.run(ref);
+
+      this.db
+        .prepare(
+          'DELETE FROM thread_events WHERE thread_id IN (SELECT id FROM context_threads WHERE channel_id = ?)',
+        )
+        .run(channelId);
+      this.db.prepare('DELETE FROM context_threads WHERE channel_id = ?').run(channelId);
+      this.db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+    });
+
+    purgeAll();
+    this.runtimes.delete(channelId);
+    return refs;
   }
 }
 
