@@ -46,7 +46,9 @@ export interface AgentsInfo {
 export const api = {
   state: () => get<UiState>('/ui/state'),
   agents: () => get<AgentsInfo>('/ui/agents'),
-  tasks: () => get<{ tasks: TaskSummary[] }>('/ui/tasks'),
+  /** 기본은 진행 중인 Task만. 종결분까지 보려면 view: 'all' (전체 조회 화면은 이후 단계). */
+  tasks: (view?: 'active' | 'all') =>
+    get<{ tasks: TaskSummary[] }>(`/ui/tasks${view ? `?view=${view}` : ''}`),
   setAgent: (id: string, agent: string) =>
     post<{ task: Task }>(`/ui/tasks/${id}/agent`, { agent }),
   task: (id: string) => get<TaskDetail>(`/ui/tasks/${id}`),

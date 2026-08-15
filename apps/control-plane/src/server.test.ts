@@ -115,7 +115,16 @@ describe('이벤트 → claim → 보고 흐름', () => {
       });
       expect(res.statusCode).toBe(200);
     }
-    const list = await app.inject({ method: 'GET', url: '/tasks', headers: workerHeaders });
+    // 기본 목록(폴링 경로)에서는 종결된 Task가 빠진다
+    const active = await app.inject({ method: 'GET', url: '/tasks', headers: workerHeaders });
+    expect((active.json() as { tasks: unknown[] }).tasks).toHaveLength(0);
+
+    // 종결분은 view=all 로 조회한다
+    const list = await app.inject({
+      method: 'GET',
+      url: '/tasks?view=all',
+      headers: workerHeaders,
+    });
     const { tasks } = list.json() as { tasks: Array<{ status: string; preview: string }> };
     expect(tasks[0]?.status).toBe('completed');
     expect(tasks[0]?.preview).toBe('테스트 이벤트');

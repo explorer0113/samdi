@@ -57,8 +57,9 @@ switch (cmd) {
     break;
   }
   case 'list': {
-    const status = rest[0] ? `?status=${rest[0]}` : '';
-    const out = (await api(`/tasks${status}`)) as { tasks: Task[] };
+    // CLI는 폴링이 아니므로 종결된 Task까지 보여준다 (상태를 주면 그 상태만).
+    const query = rest[0] ? `?status=${rest[0]}` : '?view=all';
+    const out = (await api(`/tasks${query}`)) as { tasks: Task[] };
     printTasks(out.tasks);
     break;
   }

@@ -54,6 +54,45 @@ describe('TaskStore', () => {
     ]);
   });
 
+  it('목록은 기본적으로 진행 중인 것만, 최신순으로 준다', async () => {
+    const done = await store.createTask('demo', 'demo', '끝난 것');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(done.id, { type: 'started' });
+    store.applyReport(done.id, { type: 'completed' });
+    const live = await store.createTask('demo', 'demo', '진행 중');
+
+    // 기본(active): 종결된 것은 빠진다
+    expect(store.listTasks().map((t) => t.id)).toEqual([live.id]);
+    // view: 'all': 전부, 최신 생성순
+    expect(store.listTasks({ view: 'all' }).map((t) => t.id)).toEqual([live.id, done.id]);
+    // status 명시: 그 상태만
+    expect(store.listTasks({ status: 'completed' }).map((t) => t.id)).toEqual([done.id]);
+  });
+
+  it('목록에 limit이 걸린다 (기본 50, 상한 200)', async () => {
+    for (let i = 0; i < 5; i++) await store.createTask('demo', 'demo', `t${i}`);
+    expect(store.listTasks({ limit: 2 })).toHaveLength(2);
+    expect(store.listTasks({ limit: 999 })).toHaveLength(5); // 상한을 넘겨도 안전
+    expect(store.listTasks()).toHaveLength(5);
+  });
+
+  it('claim은 lease 만료 스캔을 돌리지 않는다 (주기 스캔의 몫)', async () => {
+    const task = await store.createTask('demo', 'demo', 'x');
+    store.claimNext('w1', ['demo'], 600);
+    db.prepare('UPDATE tasks SET lease_expires_at = ? WHERE id = ?').run(
+      new Date(Date.now() - 1000).toISOString(),
+      task.id,
+    );
+
+    // 다른 Worker가 claim을 시도해도 만료 처리가 일어나지 않는다
+    store.claimNext('w2', ['demo'], 600);
+    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('claimed');
+
+    // 주기 스캔이 돌아야 stalled가 된다
+    expect(store.sweepExpiredLeases()).toBe(1);
+    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('stalled');
+  });
+
   it('Start Gate 기각은 rejected로 마감된다', async () => {
     const b = await store.createTask('demo', 'demo', 'b');
     store.claimNext('w1', ['demo'], 600);

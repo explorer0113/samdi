@@ -339,6 +339,18 @@ curl -X POST http://127.0.0.1:3000/channels/mail/events \
   -d '{"payload":"자연어 본문"}'
 ```
 
+### 완료된 Task가 UI 목록에서 사라졌다
+
+의도된 동작이다. UI는 1.5초마다 목록을 폴링하므로 종결된 Task(`completed`·`failed`·`rejected`)는
+싣지 않는다. 끝난 것까지 보려면:
+
+```sh
+curl "http://127.0.0.1:3000/tasks?view=all&limit=100" -H 'x-worker-key: demo-worker-key'
+cd apps/demo-cli && pnpm start list          # CLI는 기본이 전체
+```
+
+전용 조회 화면은 로드맵의 "관찰성·운영" 항목에 있다.
+
 ### Task가 pending에서 안 움직인다
 
 `worker.labels`에 채널의 `label`이 없는 경우가 대부분이다. 라벨은 `label`이 지정돼 있으면 그 값, 없으면 채널 `id`다.

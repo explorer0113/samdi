@@ -117,7 +117,11 @@ app.get('/ui/agents', async () => ({
   default: defaultAgent,
 }));
 
-app.get('/ui/tasks', async () => client.listTasks());
+/** UI 폴링 경로. 기본은 진행 중인 Task만 (종결분은 view=all로 명시해야 온다). */
+app.get('/ui/tasks', async (req) => {
+  const { view, limit } = req.query as { view?: 'active' | 'all'; limit?: string };
+  return client.listTasks({ view, limit: limit ? Number(limit) : undefined });
+});
 
 /** 처리할 에이전트 지정 (pending 동안만) */
 app.post('/ui/tasks/:taskId/agent', async (req, reply) => {

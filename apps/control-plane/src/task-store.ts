@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Task, TaskEvent, TaskReport, TaskStatus, TaskSummary } from '@samdi/protocol';
-import { assertTransition, type PayloadStore } from '@samdi/task-domain';
+import { TERMINAL_STATUSES, assertTransition, type PayloadStore } from '@samdi/task-domain';
 import type { Db } from './db.js';
 
 const now = () => new Date().toISOString();
@@ -123,9 +123,14 @@ export class TaskStore {
     return toTask(this.getRow(id));
   }
 
-  /** 원자적 claim. pending 중 라벨이 맞는 가장 오래된 Task 하나를 가져간다. */
+  /**
+   * 원자적 claim. pending 중 라벨이 맞는 가장 오래된 Task 하나를 가져간다.
+   *
+   * 여기서 lease 만료 스캔을 돌리지 않는다 — 만료는 stalled로 가지 pending으로
+   * 돌아오지 않으므로 claim할 거리가 늘지 않는다. Worker마다 매 폴링에서 전체를
+   * 훑던 순수 낭비였다. 만료 처리는 주기 스캔이 맡는다.
+   */
   claimNext(workerId: string, labels: string[], leaseSeconds: number): Task | null {
-    this.sweepExpiredLeases();
     const placeholders = labels.map(() => '?').join(', ');
     const tx = this.db.transaction((): TaskRow | null => {
       const row = this.db
@@ -205,14 +210,31 @@ export class TaskStore {
     return rows.length;
   }
 
-  listTasks(status?: TaskStatus): TaskSummary[] {
+  /**
+   * Task 목록. 최신순(created_at DESC)으로, 기본은 진행 중인 것만 준다.
+   *
+   * UI가 초 단위로 폴링하는 경로이므로 종결된 Task까지 매번 실어 보내지 않는다.
+   * 종결분을 보려면 view: 'all' 또는 status를 명시한다 (관리자 화면은 이후 단계).
+   */
+  listTasks(opts: { status?: TaskStatus; view?: 'active' | 'all'; limit?: number } = {}): TaskSummary[] {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
     const select = `SELECT t.*, substr(p.body, 1, 120) AS preview
        FROM tasks t JOIN payloads p ON p.ref = t.payload_ref`;
-    const rows = (
-      status
-        ? this.db.prepare(`${select} WHERE t.status = ? ORDER BY t.created_at`).all(status)
-        : this.db.prepare(`${select} ORDER BY t.created_at`).all()
-    ) as Array<TaskRow & { preview: string }>;
+    const tail = 'ORDER BY t.created_at DESC LIMIT ?';
+
+    let rows: Array<TaskRow & { preview: string }>;
+    if (opts.status) {
+      rows = this.db
+        .prepare(`${select} WHERE t.status = ? ${tail}`)
+        .all(opts.status, limit) as Array<TaskRow & { preview: string }>;
+    } else if (opts.view === 'all') {
+      rows = this.db.prepare(`${select} ${tail}`).all(limit) as Array<TaskRow & { preview: string }>;
+    } else {
+      const holes = TERMINAL_STATUSES.map(() => '?').join(', ');
+      rows = this.db
+        .prepare(`${select} WHERE t.status NOT IN (${holes}) ${tail}`)
+        .all(...TERMINAL_STATUSES, limit) as Array<TaskRow & { preview: string }>;
+    }
     return rows.map((row) => ({ ...toTask(row), preview: row.preview }));
   }
 

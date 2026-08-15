@@ -119,9 +119,23 @@ export function buildServer({
     return { task };
   });
 
+  /**
+   * Task 목록. 기본은 진행 중인 것만 최신순으로 (UI가 초 단위로 폴링하는 경로).
+   * 종결분까지 보려면 view=all, 특정 상태만 보려면 status=<상태>.
+   */
   app.get('/tasks', { preHandler: requireWorkerKey }, async (req) => {
-    const { status } = req.query as { status?: TaskStatus };
-    return { tasks: store.listTasks(status) };
+    const { status, view, limit } = req.query as {
+      status?: TaskStatus;
+      view?: 'active' | 'all';
+      limit?: string;
+    };
+    return {
+      tasks: store.listTasks({
+        status,
+        view,
+        limit: limit ? Number(limit) : undefined,
+      }),
+    };
   });
 
   app.get('/tasks/:taskId', { preHandler: requireWorkerKey }, async (req) => {

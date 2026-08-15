@@ -13,7 +13,10 @@ const TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   failed: [],
 };
 
-const TERMINAL: readonly TaskStatus[] = ['rejected', 'completed', 'failed'];
+/** 더 이상 아무 일도 일어나지 않는 상태. 진행 중 목록에서 빼는 기준이기도 하다. */
+export const TERMINAL_STATUSES: readonly TaskStatus[] = ['rejected', 'completed', 'failed'];
+
+const TERMINAL = TERMINAL_STATUSES;
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   return TRANSITIONS[from].includes(to);

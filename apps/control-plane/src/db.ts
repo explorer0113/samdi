@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS tasks (
   updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status_label ON tasks(status, label);
+-- 목록 조회(최신순)와 lease 만료 스캔이 각각 쓰는 인덱스
+CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
+CREATE INDEX IF NOT EXISTS idx_tasks_lease ON tasks(status, lease_expires_at);
 
 CREATE TABLE IF NOT EXISTS task_events (
   id TEXT PRIMARY KEY,

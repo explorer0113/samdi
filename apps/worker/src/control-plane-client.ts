@@ -45,8 +45,14 @@ export class ControlPlaneClient {
     });
   }
 
-  async listTasks(status?: TaskStatus): Promise<{ tasks: TaskSummary[] }> {
-    const qs = status ? `?status=${status}` : '';
+  async listTasks(
+    opts: { status?: TaskStatus; view?: 'active' | 'all'; limit?: number } = {},
+  ): Promise<{ tasks: TaskSummary[] }> {
+    const params = new URLSearchParams();
+    if (opts.status) params.set('status', opts.status);
+    if (opts.view) params.set('view', opts.view);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    const qs = params.size > 0 ? `?${params}` : '';
     return (await this.request(`/tasks${qs}`)) as { tasks: TaskSummary[] };
   }
 

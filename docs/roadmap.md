@@ -58,6 +58,8 @@ samdi가 지금 무엇을 하고, 다음에 무엇을 할지. 개요는 [README]
 
 ### 관찰성·운영
 
+- **전체 Task 조회 화면(관리자 페이지)** — UI 목록은 진행 중인 Task만 폴링한다.
+  완료·실패·기각된 Task는 API로는 볼 수 있지만(`GET /tasks?view=all`) 화면이 없다
 - 에이전트 진행 상황 스트리밍 (`--output-format stream-json` → UI 진행 상세)
 - 채널·Worker 등록과 키 발급 흐름 (현재는 설정 파일에 평문)
 - Task 목록 필터·검색, 라벨별 통계

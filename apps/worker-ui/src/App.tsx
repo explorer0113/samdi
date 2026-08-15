@@ -25,9 +25,10 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
+      // 진행 중인 Task만 받는다 — 종결분까지 초 단위로 실어 나를 이유가 없다.
       const [s, t] = await Promise.all([api.state(), api.tasks()]);
       setState(s);
-      setTasks(t.tasks.slice().reverse()); // 최신 먼저
+      setTasks(t.tasks); // 서버가 최신순으로 준다
       setError(null);
     } catch (err) {
       setError(`Worker 로컬 API에 연결할 수 없습니다 (${String(err)}). worker가 떠 있나요?`);
@@ -37,8 +38,16 @@ export function App() {
   useEffect(() => {
     void refresh();
     api.agents().then(setAgents).catch(() => {});
-    const timer = setInterval(() => void refresh(), 1500);
-    return () => clearInterval(timer);
+    // 보이지 않는 탭은 폴링하지 않는다. 다시 보일 때 즉시 한 번 당겨온다.
+    const tick = () => {
+      if (!document.hidden) void refresh();
+    };
+    const timer = setInterval(tick, 1500);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -47,13 +56,15 @@ export function App() {
       return;
     }
     let cancelled = false;
-    const load = () =>
+    const load = () => {
+      if (document.hidden) return;
       api
         .task(selectedId)
         .then((d) => {
           if (!cancelled) setDetail(d);
         })
         .catch(() => {});
+    };
     void load();
     const timer = setInterval(load, 1500);
     return () => {
@@ -193,9 +204,13 @@ export function App() {
 
         <div className="stack">
           <section className="card">
-            <h2>Task 목록</h2>
+            <h2>진행 중인 Task</h2>
             {tasks.length === 0 ? (
-              <p className="empty">Task가 없습니다. 왼쪽에서 이벤트를 주입해보세요.</p>
+              <p className="empty">
+                진행 중인 Task가 없습니다. 왼쪽에서 이벤트를 주입해보세요.
+                <br />
+                완료·실패·기각된 Task는 목록에서 빠집니다 (전체 조회 화면은 이후 단계).
+              </p>
             ) : (
               <table>
                 <thead>
