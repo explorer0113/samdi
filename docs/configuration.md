@@ -152,9 +152,12 @@ samdi가 보내는 요청:
 | `worker.pollIntervalMs` | 양의 정수 | `2000` | claim 폴링 주기 |
 | `worker.leaseSeconds` | 1–3600 | `600` | lease 길이. 이 시간 안에 보고가 없으면 서버가 `stalled`로 옮긴다 |
 | `worker.reportPort` | 정수 1–65535 | `4700` | 로컬 보고 API + UI용 API 포트(루프백 전용) |
-| `defaultAgent` | `mock` \| `claude-code` \| `claude-code-terminal` | `mock` | Task에 `agent` 지정이 없을 때 쓸 에이전트 |
-| `agents.claude-code` | 객체 | 아래 표 | headless 실행 어댑터 설정 |
-| `agents.claude-code-terminal` | 객체 | 아래 표 | Terminal 창 실행 어댑터 설정(macOS 전용) |
+| `worker.concurrency` | 1–32 | `1` | 동시에 처리할 Task 수. 1이면 앞선 Task가 끝나야 다음을 집는다 — 사람을 기다리는 작업이 있으면 그 뒤가 전부 밀린다 |
+| `startGate.requireApproval` | 불리언 | `true` | 시작 전 사람 승인을 받는다. 에이전트 종류와 무관하게 Worker가 강제한다 |
+| `startGate.autoPassLabels` | 문자열 배열 | `[]` | 승인 없이 통과시킬 라벨 |
+| `startGate.autoPassChannels` | 문자열 배열 | `[]` | 승인 없이 통과시킬 채널 |
+| `defaultAgent` | `mock` \| `claude-code` | `mock` | Task에 `agent` 지정이 없을 때 쓸 에이전트 |
+| `agents.claude-code` | 객체 | 아래 표 | Claude Code 어댑터 설정. Terminal 창을 띄워 진행 과정을 보며 개입할 수 있다(macOS 전용) |
 
 `agents.*` 공통 키:
 
@@ -164,7 +167,6 @@ samdi가 보내는 요청:
 | `allowedTools` | 문자열 | `Bash(curl *)` | Claude Code `--allowedTools` 값. **보고용 curl이 빠지면 완료 보고를 못 한다** |
 | `permissionMode` | `default` \| `acceptEdits` \| `plan` \| `auto` \| `dontAsk` \| `bypassPermissions` | (없음) | Claude Code `--permission-mode` |
 | `cwd` | 경로 | (없음 → `~/.samdi/agent-workspace`) | 에이전트 작업 디렉토리. **고정 경로여야** Claude Code의 폴더 신뢰 수락이 재사용된다 |
-| `timeoutMs` | 양의 정수 | `600000` | headless 실행 타임아웃. `claude-code-terminal`은 무시한다 |
 
 > `worker.reportPort`를 바꾸면 worker-ui의 프록시도 같은 포트를 봐야 한다.
 > UI를 띄울 때 `SAMDI_REPORT_PORT`를 같이 주면 된다(4절 레시피 참조).
@@ -198,14 +200,15 @@ samdi가 보내는 요청:
 | `SAMDI_POLL_INTERVAL_MS` | `worker.pollIntervalMs` |
 | `SAMDI_LEASE_SECONDS` | `worker.leaseSeconds` |
 | `SAMDI_REPORT_PORT` | `worker.reportPort` |
+| `SAMDI_CONCURRENCY` | `worker.concurrency` |
+| `SAMDI_REQUIRE_APPROVAL` | `startGate.requireApproval` (`false`면 끔) |
 | `SAMDI_AGENT` | `defaultAgent` |
-| `SAMDI_CLAUDE_BIN` | `agents.claude-code.bin`, `agents.claude-code-terminal.bin` |
-| `SAMDI_CLAUDE_ALLOWED_TOOLS` | 두 어댑터의 `allowedTools` |
-| `SAMDI_CLAUDE_PERMISSION_MODE` | 두 어댑터의 `permissionMode` |
-| `SAMDI_CLAUDE_CWD` | 두 어댑터의 `cwd` |
-| `SAMDI_CLAUDE_TIMEOUT_MS` | 두 어댑터의 `timeoutMs` |
+| `SAMDI_CLAUDE_BIN` | `agents.claude-code.bin` |
+| `SAMDI_CLAUDE_ALLOWED_TOOLS` | `agents.claude-code.allowedTools` |
+| `SAMDI_CLAUDE_PERMISSION_MODE` | `agents.claude-code.permissionMode` |
+| `SAMDI_CLAUDE_CWD` | `agents.claude-code.cwd` |
 
-`SAMDI_CLAUDE_*`는 **두 claude 어댑터에 함께** 적용된다. 하나만 다르게 하려면 설정 파일을 쓴다.
+`SAMDI_REQUIRE_APPROVAL=false`로 승인 정책을 끌 수 있고, `SAMDI_CONCURRENCY`로 동시 처리 수를 바꾼다.
 
 ## 6. 작업 레시피
 
@@ -339,6 +342,33 @@ curl -X POST http://127.0.0.1:3000/channels/mail/events \
   -d '{"payload":"자연어 본문"}'
 ```
 
+### 승인을 면제할 채널·라벨을 정한다
+
+기본값은 **모든 Task가 시작 전 승인을 받는다**. 이건 Worker의 Start Gate가 강제하므로
+에이전트가 무엇이든(mock이든 Claude Code든) 똑같이 동작한다. 면제할 것만 나열한다:
+
+```yaml
+# samdi.worker.yaml
+startGate:
+  requireApproval: true
+  autoPassLabels: [reports]      # 이 라벨은 바로 실행
+  autoPassChannels: [cron]       # 이 채널도 바로 실행
+```
+
+전부 승인 없이 돌리려면 `requireApproval: false` (또는 `SAMDI_REQUIRE_APPROVAL=false`).
+
+### 앞선 작업이 끝나야 다음이 시작된다
+
+기본 `worker.concurrency`가 1이라 그렇다. Terminal 에이전트처럼 사람을 기다리는 작업이
+있으면 그 뒤가 전부 `pending`에 밀린다. 동시에 여러 건을 처리하려면 올린다:
+
+```yaml
+worker:
+  concurrency: 3
+```
+
+claim은 서버에서 원자적이므로 같은 Task를 둘이 집는 일은 없다.
+
 ### 승인 버튼이 안 뜬다 (Task는 `waiting`인데)
 
 승인 대기는 Worker의 메모리에 있다. Worker가 재시작하면(개발 중 파일 저장 → `tsx watch`,
@@ -409,7 +439,7 @@ SAMDI_REPORT_PORT=4800 pnpm --filter @samdi/worker-ui dev
 | `YAML 문법 오류: /경로` | 들여쓰기·괄호 문제 | 해당 줄 수정 |
 | `설정 파일의 최상위는 매핑(key: value)이어야 한다` | 최상위가 리스트/스칼라 | `key: value` 형태로 |
 | `... 올바르지 않다:` + `- worker.leaseSeconds: ...` | 값이 스키마 위반 | 표시된 키를 4·5절 표와 맞춘다 |
-| `- defaultAgent: Invalid enum value...` | 없는 에이전트 이름 | `mock`, `claude-code`, `claude-code-terminal` 중 하나 |
+| `- defaultAgent: Invalid enum value...` | 없는 에이전트 이름 | `mock` 또는 `claude-code` |
 
 ## 8. 키를 추가·변경할 때 (개발자·에이전트용 체크리스트)
 

@@ -186,12 +186,12 @@ agents:
     expect(config.worker.labels).toEqual(['mail', 'ops', 'dev']);
   });
 
-  it('SAMDI_CLAUDE_* 는 두 claude 어댑터에 함께 적용된다', () => {
+  it('SAMDI_CLAUDE_* 는 claude-code 어댑터에 적용된다', () => {
     const { config } = loadWorkerConfig({
       cwd: dir,
       env: { SAMDI_CLAUDE_BIN: '/opt/claude', SAMDI_CLAUDE_ALLOWED_TOOLS: 'Bash,Read' },
     });
-    for (const key of ['claude-code', 'claude-code-terminal'] as const) {
+    for (const key of ['claude-code'] as const) {
       expect(config.agents[key].bin).toBe('/opt/claude');
       expect(config.agents[key].allowedTools).toBe('Bash,Read');
     }

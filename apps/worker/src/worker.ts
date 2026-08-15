@@ -88,18 +88,21 @@ export interface WorkerDeps {
  */
 export class Worker {
   private readonly queues = new Map<string, ReportQueue>();
-  private currentTask: CurrentTask | null = null;
-  private pendingApproval: PendingApproval | null = null;
-  private approvalResolver: ((decision: AskDecision) => void) | null = null;
+  // 동시에 여러 Task를 처리하므로 진행 상태와 승인 대기를 Task별로 들고 있는다.
+  private readonly currentTasks = new Map<string, CurrentTask>();
+  private readonly pendingApprovals = new Map<string, PendingApproval>();
+  private readonly approvalResolvers = new Map<string, (decision: AskDecision) => void>();
 
   constructor(private readonly deps: WorkerDeps) {}
 
-  get current(): CurrentTask | null {
-    return this.currentTask;
+  /** 지금 처리 중인 Task들 (시작한 순서) */
+  get current(): CurrentTask[] {
+    return [...this.currentTasks.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
   }
 
-  get approval(): PendingApproval | null {
-    return this.pendingApproval;
+  /** 사용자 결정을 기다리는 승인들 (물어본 순서) */
+  get approvals(): PendingApproval[] {
+    return [...this.pendingApprovals.values()].sort((a, b) => a.askedAt.localeCompare(b.askedAt));
   }
 
   /**
@@ -124,15 +127,32 @@ export class Worker {
     return { ok: true };
   }
 
-  /** 사용자의 승인/거부 결정 (worker-ui에서 온다). 대기 중인 승인이 없으면 false. */
+  /** 사용자의 승인/거부 결정 (worker-ui에서 온다). 그 Task의 대기가 없으면 false. */
   decide(taskId: string, decision: AskDecision): boolean {
-    if (this.pendingApproval?.taskId !== taskId || !this.approvalResolver) return false;
-    this.approvalResolver(decision);
+    const resolve = this.approvalResolvers.get(taskId);
+    if (!resolve) return false;
+    resolve(decision);
     return true;
   }
 
-  private setPhase(phase: WorkerPhase): void {
-    if (this.currentTask) this.currentTask = { ...this.currentTask, phase };
+  private setPhase(taskId: string, phase: WorkerPhase): void {
+    const current = this.currentTasks.get(taskId);
+    if (current) this.currentTasks.set(taskId, { ...current, phase });
+  }
+
+  /** 사용자 결정이 올 때까지 기다린다. 그동안 이 Task는 waiting으로 표시된다. */
+  private waitForApproval(taskId: string, question: string): Promise<AskDecision> {
+    return new Promise<AskDecision>((resolve) => {
+      this.pendingApprovals.set(taskId, {
+        taskId,
+        question,
+        askedAt: new Date().toISOString(),
+      });
+      this.approvalResolvers.set(taskId, resolve);
+    }).finally(() => {
+      this.pendingApprovals.delete(taskId);
+      this.approvalResolvers.delete(taskId);
+    });
   }
 
   /** Task 하나를 처리한다. claim할 게 없었으면 false. */
@@ -154,24 +174,46 @@ export class Worker {
     if (!task) return false;
     // 해석·분류는 서버가 이미 끝냈다. 여기서는 시작 여부만 판정한다.
     const instruction = payload ?? '';
-    this.currentTask = {
+    this.currentTasks.set(task.id, {
       taskId: task.id,
       label: task.label,
       phase: 'gate',
       startedAt: new Date().toISOString(),
-    };
+    });
     activity.push('claimed', task.id, task.label);
     log.info({ taskId: task.id, label: task.label }, 'task claimed');
 
     try {
       const decision = await gate.evaluate(task, instruction);
-      if (decision.verdict !== 'allow') {
-        const reason = decision.reason ?? `start gate verdict: ${decision.verdict}`;
+
+      if (decision.verdict === 'deny') {
+        const reason = decision.reason ?? 'start gate denied';
         await client.report(task.id, { type: 'rejected', reason });
         activity.push('gate:deny', task.id, reason);
         return true;
       }
-      activity.push('gate:allow', task.id);
+
+      // ask — 에이전트를 띄우기 전에 사람의 승인을 받는다.
+      // 에이전트가 스스로 물어보길 기대하지 않고 여기서 강제하므로,
+      // 어떤 에이전트를 쓰든 동작이 같다.
+      if (decision.verdict === 'ask') {
+        const question = decision.question ?? '이 작업을 시작할까요?';
+        this.setPhase(task.id, 'awaiting_approval');
+        activity.push('gate:ask', task.id, decision.reason);
+        await client.report(task.id, { type: 'waiting', question });
+
+        if ((await this.waitForApproval(task.id, question)) === 'deny') {
+          await client.report(task.id, {
+            type: 'rejected',
+            reason: '사용자가 시작을 승인하지 않았다',
+          });
+          activity.push('gate:denied_by_user', task.id);
+          return true;
+        }
+        activity.push('gate:approved', task.id);
+      } else {
+        activity.push('gate:allow', task.id, decision.reason);
+      }
 
       // Task에 지정된 에이전트를 쓰되, 없거나 레지스트리에 모르는 이름이면 기본 에이전트로.
       const agentName = task.agent && adapters[task.agent] ? task.agent : defaultAgent;
@@ -181,8 +223,9 @@ export class Worker {
         activity.push('agent:fallback', task.id, `${task.agent} 없음 → ${agentName}`);
       }
 
+      // claimed → running, 또는 승인을 거친 경우 waiting → running
       await client.report(task.id, { type: 'started' });
-      this.setPhase('agent_running');
+      this.setPhase(task.id, 'agent_running');
       activity.push('agent:started', task.id, agentName);
 
       const queue = new ReportQueue();
@@ -210,40 +253,31 @@ export class Worker {
         const report = item.report;
 
         if (report.type === 'completed') {
-          this.setPhase('reporting');
+          this.setPhase(task.id, 'reporting');
           await client.report(task.id, { type: 'completed', summary: report.summary });
           activity.push('completed', task.id, report.summary);
           break;
         }
         if (report.type === 'failed') {
-          this.setPhase('reporting');
+          this.setPhase(task.id, 'reporting');
           await client.report(task.id, { type: 'failed', reason: report.reason });
           activity.push('failed', task.id, report.reason);
           break;
         }
 
-        // ask → waiting으로 올리고 사용자 결정을 기다린다.
+        // 실행 중 에이전트가 물어본 경우 → waiting으로 올리고 사용자 결정을 기다린다.
         // 주의: 승인 대기 중에도 lease는 흐른다. 오래 방치되면 stalled로 넘어갈 수 있다
         // (lease 연장 heartbeat은 이후 단계).
-        this.setPhase('awaiting_approval');
+        this.setPhase(task.id, 'awaiting_approval');
         activity.push('ask', task.id, report.question);
         await client.report(task.id, { type: 'waiting', question: report.question });
-        const userDecision = await new Promise<AskDecision>((resolve) => {
-          this.pendingApproval = {
-            taskId: task.id,
-            question: report.question,
-            askedAt: new Date().toISOString(),
-          };
-          this.approvalResolver = resolve;
-        });
-        this.pendingApproval = null;
-        this.approvalResolver = null;
+        const userDecision = await this.waitForApproval(task.id, report.question);
         item.respondDecision?.(userDecision);
 
         if (userDecision === 'approve') {
           await client.report(task.id, { type: 'resumed' });
           activity.push('approved', task.id);
-          this.setPhase('agent_running');
+          this.setPhase(task.id, 'agent_running');
           continue; // 에이전트의 최종 보고를 계속 기다린다
         }
         await client.report(task.id, { type: 'failed', reason: '사용자가 승인을 거부했다' });
@@ -254,9 +288,9 @@ export class Worker {
       return true;
     } finally {
       this.queues.delete(task.id);
-      this.pendingApproval = null;
-      this.approvalResolver = null;
-      this.currentTask = null;
+      this.pendingApprovals.delete(task.id);
+      this.approvalResolvers.delete(task.id);
+      this.currentTasks.delete(task.id);
     }
   }
 }

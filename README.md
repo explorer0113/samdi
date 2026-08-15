@@ -84,11 +84,13 @@ TTL·debounce·라벨 카탈로그도 마찬가지다 ([설정 문서](docs/conf
 stateDiagram-v2
     [*] --> pending
     pending --> claimed: claim
-    claimed --> running: Gate 통과
+    claimed --> waiting: 시작 전 승인 요청
+    claimed --> running: Gate 통과(면제)
     claimed --> rejected: Gate 기각
-    running --> waiting: 승인 요청
     waiting --> running: 승인
-    waiting --> failed: 거부
+    waiting --> rejected: 시작 거부
+    running --> waiting: 에이전트 승인 요청
+    waiting --> failed: 실행 중 거부
     running --> completed: 완료
     running --> failed: 실패
     running --> stalled: lease 만료
@@ -125,8 +127,10 @@ pnpm --filter @samdi/worker-ui dev
 Task가 만들어져 claim → Start Gate → mock 에이전트 → 완료까지 흐르는 걸 볼 수 있다.
 Task를 클릭하면 본문과 감사 이벤트 타임라인이 보인다.
 
-- 내용에 **"승인"** 을 넣으면 mock 에이전트가 승인을 요청한다 → 목록 행에 승인/거부 버튼이 뜬다.
-- 주입 폼의 드롭다운에서 **에이전트를 고를 수 있다**(`mock` / `claude-code` / `claude-code-terminal`).
+- **모든 Task는 시작 전 승인을 받는다**(기본 정책) → 목록 행에 승인/거부 버튼이 뜬다.
+  면제할 채널·라벨은 `startGate.autoPassLabels`/`autoPassChannels`로 정한다.
+- 주입 폼의 드롭다운에서 **에이전트를 고를 수 있다**(`mock` / `claude-code`).
+- 한 번에 한 건씩 처리한다. 동시에 여러 건을 돌리려면 `worker.concurrency`를 올린다.
 - 목록은 **진행 중인 Task만** 보여준다(초 단위로 폴링하므로). 끝난 것까지 보려면
   `./apps/demo-cli`의 `pnpm start list` 또는 `GET /tasks?view=all` — 전용 화면은 이후 단계다.
 
@@ -156,11 +160,9 @@ pnpm start retry <taskId>     # stalled 재시도 / abandon 으로 포기
 SAMDI_AGENT=claude-code pnpm --filter @samdi/worker start
 ```
 
-Worker가 headless로 Claude Code를 실행하고, 의뢰 프롬프트에 **보고 규약**(완료·실패·승인 요청을
-로컬 보고 API로 보내는 방법)을 함께 넣는다. 에이전트가 보고를 잊고 종료하면 어댑터가 종료 코드를 보고 대신 보고한다.
-
-`claude-code-terminal`을 고르면 백그라운드가 아니라 **Terminal 창이 열려** 에이전트가 일하는 과정을
-직접 보고 개입할 수 있다(macOS).
+`claude-code` 어댑터는 **Terminal 창을 열어** 대화형으로 실행한다(macOS) — 에이전트가 일하는
+과정을 직접 보고 개입할 수 있다. 의뢰 프롬프트에는 **보고 규약**(완료·실패·승인 요청을 로컬 보고
+API로 보내는 방법)이 함께 들어간다. 창을 그냥 닫으면 보고가 없으므로 lease 만료 → `stalled`로 흘러간다.
 
 실행 정책은 Claude Code 자신의 권한 체계에 맡긴다 — `allowedTools`/`permissionMode`로 조정한다.
 기본값은 보고용 `Bash(curl *)`만 허용하므로, 파일을 만들거나 명령을 실행하게 하려면 열어줘야 한다

@@ -3,9 +3,12 @@ import type { TaskStatus } from '@samdi/protocol';
 /** 허용되는 상태 전이. 여기 없는 전이는 전부 불법이다. */
 const TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
   pending: ['claimed'],
-  claimed: ['running', 'rejected', 'stalled'],
+  // claimed → waiting: Start Gate가 시작 전 승인을 요구한 경우
+  claimed: ['running', 'waiting', 'rejected', 'stalled'],
   running: ['waiting', 'completed', 'failed', 'stalled'],
-  waiting: ['running', 'failed', 'stalled'],
+  // waiting → rejected: 시작 전 승인을 거부해 아무것도 실행되지 않은 경우
+  // waiting → failed:   실행 중 에이전트의 승인 요청을 거부한 경우
+  waiting: ['running', 'rejected', 'failed', 'stalled'],
   // 자동 재배포 금지: stalled에서 벗어나는 길은 사용자의 재시도 승인(pending) 또는 포기(failed)뿐이다.
   stalled: ['pending', 'failed'],
   rejected: [],

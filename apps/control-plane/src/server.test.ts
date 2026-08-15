@@ -182,11 +182,11 @@ describe('에러 매핑', () => {
       method: 'POST',
       url: '/channels/demo/events',
       headers: { 'x-channel-key': 'ck' },
-      payload: { payload: '터미널로 처리해줘', agent: 'claude-code-terminal' },
+      payload: { payload: '터미널로 처리해줘', agent: 'claude-code' },
     });
     expect(res.statusCode).toBe(200);
     const { task } = await claim();
-    expect((task as { agent?: string } | null)?.agent).toBe('claude-code-terminal');
+    expect((task as { agent?: string } | null)?.agent).toBe('claude-code');
   });
 
   it('pending Task에 에이전트 지정 200, claim 후에는 409', async () => {

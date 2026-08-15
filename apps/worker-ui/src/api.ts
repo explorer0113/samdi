@@ -7,12 +7,28 @@ export interface ActivityEntry {
   detail?: string;
 }
 
+export interface CurrentTask {
+  taskId: string;
+  label: string;
+  phase: string;
+  startedAt: string;
+}
+
+export interface PendingApproval {
+  taskId: string;
+  question: string;
+  askedAt: string;
+}
+
 export interface UiState {
   workerId: string;
   labels: string[];
   controlPlaneUrl: string;
-  current: { taskId: string; label: string; phase: string; startedAt: string } | null;
-  approval: { taskId: string; question: string; askedAt: string } | null;
+  /** 동시에 처리 중인 Task들 */
+  current: CurrentTask[];
+  /** 사용자 결정을 기다리는 승인들 */
+  approvals: PendingApproval[];
+  concurrency: number;
   activity: ActivityEntry[];
 }
 

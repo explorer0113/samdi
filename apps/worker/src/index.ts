@@ -1,13 +1,8 @@
 import Fastify from 'fastify';
 import { ConfigError, loadWorkerConfig } from '@samdi/config';
 import { localReportSchema } from '@samdi/protocol';
-import {
-  ClaudeCodeAdapter,
-  ClaudeCodeTerminalAdapter,
-  MockAgentAdapter,
-  type AgentAdapter,
-} from '@samdi/agent-adapter';
-import { AllowAllStartGate } from '@samdi/policy-gateway';
+import { ClaudeCodeAdapter, MockAgentAdapter, type AgentAdapter } from '@samdi/agent-adapter';
+import { ApprovalStartGate } from '@samdi/policy-gateway';
 import { ActivityLog } from './activity-log.js';
 import { ControlPlaneClient } from './control-plane-client.js';
 import { Worker } from './worker.js';
@@ -39,7 +34,8 @@ const { config, source } = loaded;
 
 const controlPlaneUrl = config.controlPlane.url;
 const channelKey = config.controlPlane.channelKey;
-const { id: workerId, labels, pollIntervalMs, leaseSeconds, reportPort } = config.worker;
+const { id: workerId, labels, pollIntervalMs, leaseSeconds, reportPort, concurrency } =
+  config.worker;
 const defaultAgent = config.defaultAgent;
 
 const app = Fastify({ logger: true });
@@ -49,14 +45,13 @@ const client = new ControlPlaneClient(controlPlaneUrl, config.controlPlane.worke
 /** UI 드롭다운에서 Task별로 고를 수 있는 어댑터 레지스트리 */
 const adapters: Record<string, AgentAdapter> = {
   mock: new MockAgentAdapter(),
+  // Terminal 창을 띄워 사용자가 진행 과정을 보고 개입할 수 있게 한다 (macOS)
   'claude-code': new ClaudeCodeAdapter(config.agents['claude-code']),
-  // 백그라운드가 아니라 Terminal 창을 띄워 사용자가 과정을 직접 본다 (macOS)
-  'claude-code-terminal': new ClaudeCodeTerminalAdapter(config.agents['claude-code-terminal']),
 };
 
 const worker = new Worker({
   client,
-  gate: new AllowAllStartGate(),
+  gate: new ApprovalStartGate(config.startGate),
   adapters,
   defaultAgent,
   activity,
@@ -94,7 +89,8 @@ app.get('/ui/state', async () => ({
   labels,
   controlPlaneUrl,
   current: worker.current,
-  approval: worker.approval,
+  approvals: worker.approvals,
+  concurrency,
   activity: activity.list(),
 }));
 
@@ -203,18 +199,27 @@ async function main() {
       labels,
       defaultAgent,
       reportPort,
+      concurrency,
+      requireApproval: config.startGate.requireApproval,
     },
     'worker started, polling',
   );
-  while (!stopping) {
-    let processed = false;
-    try {
-      processed = await worker.processOne();
-    } catch (err) {
-      app.log.error({ err: String(err) }, 'poll iteration failed');
+
+  // concurrency만큼 독립적인 루프를 돌린다. claim은 서버에서 원자적이라
+  // 같은 Task를 둘이 집는 일은 없다. 사람을 기다리는 Task가 있어도
+  // 다른 루프가 계속 다음 일을 집는다.
+  const loop = async () => {
+    while (!stopping) {
+      let processed = false;
+      try {
+        processed = await worker.processOne();
+      } catch (err) {
+        app.log.error({ err: String(err) }, 'poll iteration failed');
+      }
+      if (!processed) await sleep(pollIntervalMs);
     }
-    if (!processed) await sleep(pollIntervalMs);
-  }
+  };
+  await Promise.all(Array.from({ length: concurrency }, loop));
   await app.close();
 }
 

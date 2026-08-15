@@ -1,19 +1,18 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AgentAdapter, AgentRunRequest } from './index.js';
 
 export interface ClaudeCodeAdapterOptions {
-  /** claude 실행 파일. PATH에 없으면 절대 경로를 준다. */
+  /** 생략 시 PATH의 `claude` */
   bin?: string;
   /** Claude Code 자체 권한 체계에 위임한다 — SOP: 실행 정책은 에이전트의 것 */
   permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'auto' | 'dontAsk' | 'bypassPermissions';
   /** --allowedTools 값. 보고용 curl은 기본으로 허용해야 한다. */
   allowedTools?: string;
-  /** 에이전트 작업 디렉토리. 기본은 임시 워크스페이스. */
+  /** 에이전트 작업 디렉토리. 고정 경로여야 폴더 신뢰 수락이 재사용된다. */
   cwd?: string;
-  timeoutMs?: number;
 }
 
 /**
@@ -36,86 +35,94 @@ export function buildReportInstruction(reportUrl: string): string {
   ].join('\n');
 }
 
+/** 셸 작은따옴표 인용 */
+function shq(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
- * Claude Code 레퍼런스 어댑터.
- * headless(-p)로 실행하고, 보고 규약을 프롬프트에 포함한다.
- * 에이전트가 보고를 잊은 채 종료하면 종료 코드 기준으로 대신 보고한다
- * (이미 보고된 Task면 404가 오므로 무시 — 이중 보고 방지).
+ * 실행 스크립트를 만든다. Terminal에는 이 파일 경로 하나만 넘기므로
+ * 프롬프트의 따옴표·줄바꿈이 AppleScript 이스케이프를 거치지 않는다.
+ * (예전에는 명령 전체를 문자열로 조립해 넘기다가 프롬프트가 유실됐다.)
+ */
+export function buildRunnerScript(opts: {
+  bin: string;
+  cwd: string;
+  promptFile: string;
+  allowedTools: string;
+  permissionMode?: string;
+}): string {
+  const flags = ['--allowedTools', shq(opts.allowedTools)];
+  if (opts.permissionMode) flags.push('--permission-mode', shq(opts.permissionMode));
+  return [
+    '#!/bin/bash',
+    '# samdi가 만든 실행 스크립트. Claude Code에 작업 지시를 넘긴다.',
+    `cd ${shq(opts.cwd)} || exit 1`,
+    `prompt=$(cat ${shq(opts.promptFile)})`,
+    `exec ${shq(opts.bin)} ${flags.join(' ')} "$prompt"`,
+    '',
+  ].join('\n');
+}
+
+/**
+ * Claude Code 어댑터 — Terminal 창을 띄워 대화형으로 실행한다 (macOS).
+ *
+ * 백그라운드로 돌리지 않는 이유는 사용자가 진행 과정을 보고 개입할 수 있어야 하기
+ * 때문이다. 완료 판정은 프롬프트에 넣은 보고 규약(curl → 로컬 보고 API)에 의존한다.
+ * 창을 그냥 닫으면 보고가 없으므로 lease 만료 → stalled로 흘러간다 (수동 게이트).
  */
 export class ClaudeCodeAdapter implements AgentAdapter {
   constructor(private readonly opts: ClaudeCodeAdapterOptions = {}) {}
 
   async start(request: AgentRunRequest): Promise<void> {
+    if (process.platform !== 'darwin') {
+      throw new Error('claude-code 어댑터는 현재 macOS(Terminal.app)만 지원한다');
+    }
     const bin = this.opts.bin ?? 'claude';
     const cwd = this.opts.cwd ?? defaultWorkspace();
     mkdirSync(cwd, { recursive: true });
 
-    const prompt = `${request.instruction}\n\n${buildReportInstruction(request.reportUrl)}`;
-    const args = ['-p', prompt, '--output-format', 'json'];
-    if (this.opts.permissionMode) args.push('--permission-mode', this.opts.permissionMode);
-    args.push('--allowedTools', this.opts.allowedTools ?? 'Bash(curl *)');
+    const dir = mkdirSync(path.join(os.tmpdir(), 'samdi'), { recursive: true })
+      ? path.join(os.tmpdir(), 'samdi')
+      : path.join(os.tmpdir(), 'samdi');
+    const promptFile = path.join(dir, `prompt-${request.task.id}.txt`);
+    const runnerFile = path.join(dir, `run-${request.task.id}.sh`);
 
-    const outcome = await new Promise<{
-      code: number | null;
-      stdout: string;
-      stderr: string;
-      timedOut: boolean;
-    }>((resolve, reject) => {
-      const proc = spawn(bin, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-      let stdout = '';
+    writeFileSync(
+      promptFile,
+      `${request.instruction}\n\n${buildReportInstruction(request.reportUrl)}`,
+      'utf8',
+    );
+    writeFileSync(
+      runnerFile,
+      buildRunnerScript({
+        bin,
+        cwd,
+        promptFile,
+        allowedTools: this.opts.allowedTools ?? 'Bash(curl *)',
+        permissionMode: this.opts.permissionMode,
+      }),
+      'utf8',
+    );
+    chmodSync(runnerFile, 0o700);
+
+    // Terminal에는 스크립트 경로만 넘긴다 — 이스케이프할 게 없다.
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn('osascript', [
+        '-e',
+        `tell application "Terminal" to do script ${JSON.stringify(runnerFile)}`,
+        '-e',
+        'tell application "Terminal" to activate',
+      ]);
       let stderr = '';
-      let timedOut = false;
-      const timer = setTimeout(() => {
-        timedOut = true;
-        proc.kill('SIGTERM');
-      }, this.opts.timeoutMs ?? 600_000);
-      timer.unref?.();
-      proc.stdout.on('data', (d: Buffer) => (stdout += d));
       proc.stderr.on('data', (d: Buffer) => (stderr += d));
-      proc.on('error', (err) => {
-        clearTimeout(timer);
-        reject(err); // spawn 자체 실패 (claude 없음 등) → Worker가 failed 처리
-      });
-      proc.on('close', (code) => {
-        clearTimeout(timer);
-        resolve({ code, stdout, stderr, timedOut });
-      });
+      proc.on('error', reject);
+      proc.on('close', (code) =>
+        code === 0
+          ? resolve()
+          : reject(new Error(`Terminal 실행 실패 (osascript exit ${code}): ${stderr.trim()}`)),
+      );
     });
-
-    await this.reportFallback(request.reportUrl, outcome);
-  }
-
-  private async reportFallback(
-    reportUrl: string,
-    outcome: { code: number | null; stdout: string; stderr: string; timedOut: boolean },
-  ): Promise<void> {
-    let body: Record<string, unknown>;
-    if (outcome.timedOut) {
-      body = { type: 'failed', reason: 'claude code 실행 시간 초과' };
-    } else if (outcome.code === 0) {
-      let summary = 'claude code 실행 완료 (자체 보고 없음)';
-      try {
-        const parsed = JSON.parse(outcome.stdout) as { result?: string };
-        if (parsed.result) summary = parsed.result.slice(0, 200);
-      } catch {
-        // JSON이 아니어도 fallback 요약으로 충분하다
-      }
-      body = { type: 'completed', summary };
-    } else {
-      body = {
-        type: 'failed',
-        reason: `claude code exit ${outcome.code}: ${outcome.stderr.slice(0, 200)}`,
-      };
-    }
-
-    const res = await fetch(reportUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    // 404 = 에이전트가 이미 curl로 보고를 마친 Task — 정상이므로 무시
-    if (!res.ok && res.status !== 404) {
-      throw new Error(`fallback report failed: ${res.status}`);
-    }
+    // 여기서 끝 — 이후의 성패는 에이전트의 명시 보고(또는 lease 만료)가 결정한다.
   }
 }

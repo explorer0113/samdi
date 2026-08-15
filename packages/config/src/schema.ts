@@ -118,7 +118,7 @@ export const serverConfigSchema = z.object({
 });
 export type ServerConfig = z.infer<typeof serverConfigSchema>;
 
-/** claude-code / claude-code-terminal 어댑터 공통 옵션 */
+/** claude-code 어댑터 옵션 */
 export const claudeAgentConfigSchema = z.object({
   /** 생략 시 PATH의 `claude` */
   bin: z.string().min(1).optional(),
@@ -151,14 +151,32 @@ export const workerConfigSchema = z.object({
       leaseSeconds: z.coerce.number().int().positive().max(3600).default(600),
       /** 로컬 보고 API + UI용 API 포트 (루프백 전용) */
       reportPort: z.coerce.number().int().positive().max(65535).default(4700),
+      /**
+       * 동시에 처리할 Task 수.
+       * 1이면 앞선 Task가 끝나야 다음을 집는다 — 터미널 에이전트처럼 사람을
+       * 기다리는 작업이 있으면 그 뒤가 전부 밀린다.
+       */
+      concurrency: z.coerce.number().int().positive().max(32).default(1),
+    })
+    .default({}),
+  /**
+   * Start Gate 정책 — 시작 전에 사람 승인을 받을지.
+   *
+   * 기본은 모두 승인을 받는다. 에이전트가 스스로 물어보길 기대하지 않고 여기서
+   * 강제하므로 어떤 에이전트를 쓰든 동작이 같다. 면제할 채널·라벨만 나열한다.
+   */
+  startGate: z
+    .object({
+      requireApproval: z.boolean().default(true),
+      autoPassLabels: z.array(z.string().min(1)).default([]),
+      autoPassChannels: z.array(z.string().min(1)).default([]),
     })
     .default({}),
   /** Task에 agent 지정이 없을 때 쓸 에이전트 */
-  defaultAgent: z.enum(['mock', 'claude-code', 'claude-code-terminal']).default('mock'),
+  defaultAgent: z.enum(['mock', 'claude-code']).default('mock'),
   agents: z
     .object({
       'claude-code': claudeAgentConfigSchema.default({}),
-      'claude-code-terminal': claudeAgentConfigSchema.default({}),
     })
     .default({}),
 });

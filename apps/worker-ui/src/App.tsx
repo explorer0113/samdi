@@ -107,6 +107,9 @@ export function App() {
     }
   };
 
+  /** 그 Task가 사용자 결정을 기다리는 중이면 그 승인 정보 */
+  const approvalOf = (taskId: string) => state?.approvals.find((a) => a.taskId === taskId);
+
   const setAgent = async (taskId: string, agent: string) => {
     try {
       await api.setAgent(taskId, agent);
@@ -138,15 +141,17 @@ export function App() {
       <div className="grid">
         <div className="stack">
           <section className="card">
-            <h2>지금 처리 중</h2>
-            {state?.current ? (
-              <div className="current-task">
-                <span className="phase">{PHASE_LABEL[state.current.phase] ?? state.current.phase}</span>
-                <span className="mono">{state.current.taskId}</span>
-                <span>
-                  라벨 {state.current.label} · {timeOf(state.current.startedAt)} 시작
-                </span>
-              </div>
+            <h2>지금 처리 중 {state ? `(${state.current.length}/${state.concurrency})` : ''}</h2>
+            {state && state.current.length > 0 ? (
+              state.current.map((c) => (
+                <div className="current-task" key={c.taskId}>
+                  <span className="phase">{PHASE_LABEL[c.phase] ?? c.phase}</span>
+                  <span className="mono">{c.taskId}</span>
+                  <span>
+                    라벨 {c.label} · {timeOf(c.startedAt)} 시작
+                  </span>
+                </div>
+              ))
             ) : (
               <p className="current-idle">대기 중 — 다음 Task를 폴링하고 있습니다.</p>
             )}
@@ -181,7 +186,9 @@ export function App() {
                 전송
               </button>
             </div>
-            <p className="hint">"승인"이 포함된 내용은 mock 에이전트가 승인을 요청합니다.</p>
+            <p className="hint">
+              기본 정책상 모든 Task는 시작 전 승인을 받습니다 — 목록 행의 승인/거부 버튼으로 결정합니다.
+            </p>
           </section>
 
           <section className="card">
@@ -261,11 +268,11 @@ export function App() {
                       <td>{t.label}</td>
                       <td className="mono">{timeOf(t.updatedAt)}</td>
                       <td className="actions">
-                        {state?.approval?.taskId === t.id && (
+                        {approvalOf(t.id) && (
                           <>
                             <button
                               className="small approve"
-                              title={state.approval.question}
+                              title={approvalOf(t.id)!.question}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 void approve(t.id, 'approve');
@@ -275,7 +282,7 @@ export function App() {
                             </button>{' '}
                             <button
                               className="small danger"
-                              title={state.approval.question}
+                              title={approvalOf(t.id)!.question}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 void approve(t.id, 'deny');
@@ -309,9 +316,9 @@ export function App() {
                         )}
                       </td>
                     </tr>
-                    {state?.approval?.taskId === t.id && (
+                    {approvalOf(t.id) && (
                       <tr className="question-row">
-                        <td colSpan={7}>{state.approval.question}</td>
+                        <td colSpan={7}>{approvalOf(t.id)!.question}</td>
                       </tr>
                     )}
                     </Fragment>

@@ -27,20 +27,29 @@ PIDS=()
 
 # pnpm → tsx/vite로 이어지는 자식까지 훑어서 정리한다.
 # (`kill 0`은 비대화형 실행에서 호출한 셸까지 같은 그룹이라 위험하다.)
-kill_tree() {
+# pnpm → sh → node(tsx/vite)로 이어지는 자손 PID를 모두 모은다.
+descendants() {
   local pid=$1 child
-  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
-  kill "$pid" 2>/dev/null || true
+  echo "$pid"
+  for child in $(pgrep -P "$pid" 2>/dev/null); do descendants "$child"; done
 }
 
 cleanup() {
   trap - INT TERM EXIT
   echo
   echo "종료 중..."
-  local pid
+  # 죽이기 전에 목록을 먼저 확보한다. TERM으로 중간 프로세스가 사라지면
+  # 손자(vite)가 init에 재부모되어 더 이상 트리로 찾을 수 없다.
+  local pid targets=()
   for pid in "${PIDS[@]:-}"; do
-    [ -n "$pid" ] && kill_tree "$pid"
+    [ -n "$pid" ] && targets+=($(descendants "$pid"))
   done
+
+  for pid in "${targets[@]:-}"; do kill -TERM "$pid" 2>/dev/null || true; done
+  # vite는 TERM에 늦게 반응할 때가 있다. 남은 것은 강제 종료한다 —
+  # 안 그러면 포트를 물고 있어 다음 실행이 EADDRINUSE로 죽는다.
+  sleep 1
+  for pid in "${targets[@]:-}"; do kill -KILL "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
 }
 trap cleanup INT TERM EXIT

@@ -15,9 +15,17 @@ worker:
   leaseSeconds: 600
   # 로컬 보고 API + UI용 API 포트 (루프백 전용)
   reportPort: 4700
+  # 동시에 처리할 Task 수. 1이면 사람을 기다리는 작업 뒤가 전부 밀린다.
+  concurrency: 1
+
+# 시작 전 사람 승인 — 기본은 전부 받는다. 에이전트 종류와 무관하게 Worker가 강제한다.
+startGate:
+  requireApproval: true
+  autoPassLabels: []       # 예: [reports] — 이 라벨은 승인 없이 실행
+  autoPassChannels: []     # 예: [cron]
 
 # Task에 agent 지정이 없을 때 쓸 에이전트
-# mock | claude-code | claude-code-terminal
+# mock | claude-code (Terminal 창을 띄워 진행 과정을 보며 개입할 수 있다, macOS)
 defaultAgent: mock
 
 agents:
@@ -28,7 +36,3 @@ agents:
     # permissionMode: acceptEdits
     cwd: ~/.samdi/agent-workspace
     timeoutMs: 600000
-
-  claude-code-terminal:
-    allowedTools: Bash(curl *)
-    cwd: ~/.samdi/agent-workspace

@@ -53,4 +53,3 @@ export class MockAgentAdapter implements AgentAdapter {
 }
 
 export * from './claude-code.js';
-export * from './claude-code-terminal.js';

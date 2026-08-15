@@ -14,6 +14,11 @@ describe('task state machine', () => {
     expect(canTransition('waiting', 'failed')).toBe(true);
   });
 
+  it('허용: 시작 전 승인 — claimed에서 바로 대기하고, 거부하면 rejected', () => {
+    expect(canTransition('claimed', 'waiting')).toBe(true);
+    expect(canTransition('waiting', 'rejected')).toBe(true);
+  });
+
   it('허용: Start Gate 기각은 claimed에서만', () => {
     expect(canTransition('claimed', 'rejected')).toBe(true);
     expect(canTransition('running', 'rejected')).toBe(false);
