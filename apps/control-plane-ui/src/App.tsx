@@ -344,18 +344,30 @@ function Channels({
   onChanged: () => Promise<void>;
 }) {
   const [newId, setNewId] = useState('');
+  const [newLabel, setNewLabel] = useState('');
   const [mode, setMode] = useState<'passthrough' | 'claude'>('passthrough');
   const [busy, setBusy] = useState(false);
   const [injectTo, setInjectTo] = useState<string | null>(null);
   const [payload, setPayload] = useState('');
 
+  // 라벨을 안 고르면 첫 번째 커버된 라벨을 쓴다. 라벨을 비워두면 id가 라벨이 되는데
+  // 그러면 아무도 안 보는 채널이 만들어지므로, 기본값을 "도는 쪽"으로 둔다.
+  const labelFallback = coveredLabels?.[0] ?? '';
+  const effectiveLabel = newLabel.trim() || labelFallback;
+  const willBeOrphan = coveredLabels !== null && !coveredLabels.includes(effectiveLabel || newId.trim());
+
   const create = async () => {
     if (!newId.trim() || busy) return;
     setBusy(true);
     try {
-      const res = await api.createChannel({ id: newId.trim(), interpreter: { mode } });
+      const res = await api.createChannel({
+        id: newId.trim(),
+        ...(effectiveLabel ? { label: effectiveLabel } : {}),
+        interpreter: { mode },
+      });
       onIssued({ channelId: res.channel.id, key: res.key });
       setNewId('');
+      setNewLabel('');
       await onChanged();
     } catch (err) {
       onError(err);
@@ -407,6 +419,23 @@ function Channels({
             if (e.key === 'Enter' && !e.nativeEvent.isComposing) void create();
           }}
         />
+        {/* 라벨이 라우팅 기준이다. Worker가 보는 라벨을 목록으로 주되 직접 입력도 열어둔다 —
+            Worker는 나중에 붙을 수도 있으므로 지금 목록에 없다고 막을 일은 아니다. */}
+        <input
+          className="label-input"
+          list="covered-labels"
+          value={newLabel}
+          placeholder={labelFallback ? `라벨 (기본 ${labelFallback})` : '라벨'}
+          onChange={(e) => setNewLabel(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) void create();
+          }}
+        />
+        <datalist id="covered-labels">
+          {(coveredLabels ?? []).map((l) => (
+            <option key={l} value={l} />
+          ))}
+        </datalist>
         <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
           <option value="passthrough">passthrough (LLM 미사용)</option>
           <option value="claude">claude (해석)</option>
@@ -415,6 +444,13 @@ function Channels({
           등록
         </button>
       </div>
+      {newId.trim() && willBeOrphan && (
+        <p className="warn">
+          라벨 <code>{effectiveLabel || newId.trim()}</code>을(를) 보는 Worker가 없습니다.
+          이대로 만들면 이 채널의 Task는 <code>pending</code>에서 멈춥니다 —
+          Worker의 <code>worker.labels</code>에 추가하거나 위 목록의 라벨을 쓰세요.
+        </p>
+      )}
 
       {issuedKey && (
         <div className="issued">
