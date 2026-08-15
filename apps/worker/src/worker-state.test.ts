@@ -10,15 +10,15 @@ beforeEach(() => {
   file = path.join(mkdtempSync(path.join(os.tmpdir(), 'samdi-state-')), 'state.json');
 });
 
-const state = (labels = ['demo'], concurrency = 1) =>
-  new WorkerState({ labels, concurrency }, file);
+const state = (labels = ['demo'], concurrency = 1, defaultAgent = 'mock') =>
+  new WorkerState({ labels, concurrency, defaultAgent }, file);
 
 describe('기본값', () => {
   it('덮어쓴 게 없으면 설정값을 쓴다', () => {
     const s = state(['demo', 'mail'], 3);
     expect(s.labels).toEqual(['demo', 'mail']);
     expect(s.concurrency).toBe(3);
-    expect(s.overridden).toEqual({ labels: false, concurrency: false });
+    expect(s.overridden).toEqual({ labels: false, concurrency: false, defaultAgent: false });
   });
 });
 
@@ -109,5 +109,31 @@ describe('재시작을 견딘다', () => {
     const s = state(['demo'], 2);
     expect(s.labels).toEqual(['demo']);
     expect(s.concurrency).toBe(2);
+  });
+});
+
+describe('기본 에이전트', () => {
+  const known = ['mock', 'claude-code'];
+
+  it('바꾸면 그 값을 쓴다 — pending인 짧은 순간을 노리지 않아도 되게', () => {
+    const s = state();
+    expect(s.setDefaultAgent('claude-code', known)).toBe('claude-code');
+    expect(s.overridden.defaultAgent).toBe(true);
+  });
+
+  it('모르는 이름은 거부한다', () => {
+    expect(() => state().setDefaultAgent('gpt', known)).toThrow();
+  });
+
+  it('재시작해도 유지된다', () => {
+    state().setDefaultAgent('claude-code', known);
+    expect(state().defaultAgent).toBe('claude-code');
+  });
+
+  it('설정값과 같아지면 덮어쓴 것으로 치지 않는다', () => {
+    const s = state(['demo'], 1, 'mock');
+    s.setDefaultAgent('claude-code', known);
+    s.setDefaultAgent('mock', known);
+    expect(s.overridden.defaultAgent).toBe(false);
   });
 });

@@ -71,7 +71,8 @@ export interface WorkerDeps {
   gate: StartGate;
   /** 이름 → 어댑터 레지스트리. Task의 agent 필드로 선택하고, 없거나 모르면 defaultAgent. */
   adapters: Record<string, AgentAdapter>;
-  defaultAgent: string;
+  /** Task에 지정이 없을 때 쓸 에이전트. 화면에서 바꿀 수 있어 함수로 읽는다. */
+  defaultAgent: () => string;
   activity: ActivityLog;
   workerId: string;
   /**
@@ -96,6 +97,11 @@ export class Worker {
   private readonly currentTasks = new Map<string, CurrentTask>();
   private readonly pendingApprovals = new Map<string, PendingApproval>();
   private readonly approvalResolvers = new Map<string, (decision: AskDecision) => void>();
+  /**
+   * 승인 대기 중에 사용자가 바꾼 에이전트. 어댑터는 승인 이후에 정해지므로
+   * 이 시점의 변경이 실제로 반영된다 — pending인 짧은 순간을 노릴 필요가 없다.
+   */
+  private readonly agentOverrides = new Map<string, string>();
 
   constructor(private readonly deps: WorkerDeps) {}
 
@@ -129,6 +135,21 @@ export class Worker {
     }
     queue.push({ report });
     return { ok: true };
+  }
+
+  /**
+   * 승인 대기 중인 Task의 에이전트를 바꾼다 (worker-ui에서 온다).
+   * 어댑터는 승인 이후에 정해지므로 여기서 바꾸면 실제로 그걸로 돈다.
+   */
+  chooseAgent(taskId: string, agent: string): boolean {
+    if (!this.pendingApprovals.has(taskId)) return false;
+    this.agentOverrides.set(taskId, agent);
+    return true;
+  }
+
+  /** 지금 승인 대기 중인 Task에 대해 사용자가 고른 에이전트 */
+  chosenAgent(taskId: string): string | undefined {
+    return this.agentOverrides.get(taskId);
   }
 
   /** 사용자의 승인/거부 결정 (worker-ui에서 온다). 그 Task의 대기가 없으면 false. */
@@ -219,12 +240,15 @@ export class Worker {
         activity.push('gate:allow', task.id, decision.reason);
       }
 
-      // Task에 지정된 에이전트를 쓰되, 없거나 레지스트리에 모르는 이름이면 기본 에이전트로.
-      const agentName = task.agent && adapters[task.agent] ? task.agent : defaultAgent;
+      // 사용자가 승인 화면에서 고른 값 > Task에 박힌 값 > 기본 에이전트.
+      // 레지스트리에 없는 이름이면 기본으로 떨어진다.
+      const requested = this.agentOverrides.get(task.id) ?? task.agent;
+      const fallback = defaultAgent();
+      const agentName = requested && adapters[requested] ? requested : fallback;
       const adapter = adapters[agentName];
-      if (!adapter) throw new Error(`unknown default agent: ${defaultAgent}`);
-      if (task.agent && task.agent !== agentName) {
-        activity.push('agent:fallback', task.id, `${task.agent} 없음 → ${agentName}`);
+      if (!adapter) throw new Error(`unknown default agent: ${fallback}`);
+      if (requested && requested !== agentName) {
+        activity.push('agent:fallback', task.id, `${requested} 없음 → ${agentName}`);
       }
 
       // claimed → running, 또는 승인을 거친 경우 waiting → running

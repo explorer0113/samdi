@@ -269,26 +269,39 @@ export class TaskStore {
    * UI가 초 단위로 폴링하는 경로이므로 종결된 Task까지 매번 실어 보내지 않는다.
    * 종결분을 보려면 view: 'all' 또는 status를 명시한다 (관리자 화면은 이후 단계).
    */
-  listTasks(opts: { status?: TaskStatus; view?: 'active' | 'all'; limit?: number } = {}): TaskSummary[] {
+  /**
+   * Task 목록. 기본은 진행 중인 것만 최신순으로 (UI가 초 단위로 폴링하는 경로).
+   *
+   * 관리 화면은 종결분까지 봐야 해서 금방 수백 건이 되므로 페이지로 끊는다.
+   * `total`을 함께 주는 이유는 "몇 페이지가 더 있는가"를 화면이 알아야 하기 때문이다.
+   */
+  listTasks(
+    opts: { status?: TaskStatus; view?: 'active' | 'all'; limit?: number; offset?: number } = {},
+  ): { tasks: TaskSummary[]; total: number } {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const offset = Math.max(opts.offset ?? 0, 0);
     const select = `SELECT t.*, substr(p.body, 1, 120) AS preview
        FROM tasks t JOIN payloads p ON p.ref = t.payload_ref`;
-    const tail = 'ORDER BY t.created_at DESC LIMIT ?';
+    const tail = 'ORDER BY t.created_at DESC LIMIT ? OFFSET ?';
 
-    let rows: Array<TaskRow & { preview: string }>;
+    let where = '';
+    let params: unknown[] = [];
     if (opts.status) {
-      rows = this.db
-        .prepare(`${select} WHERE t.status = ? ${tail}`)
-        .all(opts.status, limit) as Array<TaskRow & { preview: string }>;
-    } else if (opts.view === 'all') {
-      rows = this.db.prepare(`${select} ${tail}`).all(limit) as Array<TaskRow & { preview: string }>;
-    } else {
-      const holes = TERMINAL_STATUSES.map(() => '?').join(', ');
-      rows = this.db
-        .prepare(`${select} WHERE t.status NOT IN (${holes}) ${tail}`)
-        .all(...TERMINAL_STATUSES, limit) as Array<TaskRow & { preview: string }>;
+      where = 'WHERE t.status = ?';
+      params = [opts.status];
+    } else if (opts.view !== 'all') {
+      where = `WHERE t.status NOT IN (${TERMINAL_STATUSES.map(() => '?').join(', ')})`;
+      params = [...TERMINAL_STATUSES];
     }
-    return rows.map((row) => ({ ...toTask(row), preview: row.preview }));
+
+    const rows = this.db
+      .prepare(`${select} ${where} ${tail}`)
+      .all(...params, limit, offset) as Array<TaskRow & { preview: string }>;
+    const { total } = this.db
+      .prepare(`SELECT COUNT(*) AS total FROM tasks t ${where}`)
+      .get(...params) as { total: number };
+
+    return { tasks: rows.map((row) => ({ ...toTask(row), preview: row.preview })), total };
   }
 
   async getTaskDetail(

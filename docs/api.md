@@ -260,13 +260,21 @@ curl "$CP/admin/overview" -H "$ADMIN"
 ### Task 목록 (Worker 키 또는 관리 키)
 
 ```sh
-curl "$CP/tasks" -H "$ADMIN"                    # 기본: 진행 중인 것만, 최신순
-curl "$CP/tasks?view=all&limit=100" -H "$ADMIN" # 종결분까지
-curl "$CP/tasks?status=stalled" -H "$ADMIN"     # 특정 상태만
+curl "$CP/tasks" -H "$ADMIN"                              # 기본: 진행 중인 것만, 최신순
+curl "$CP/tasks?view=all&limit=25&offset=0" -H "$ADMIN"   # 종결분까지, 1페이지
+curl "$CP/tasks?view=all&limit=25&offset=25" -H "$ADMIN"  # 2페이지
+curl "$CP/tasks?status=stalled" -H "$ADMIN"               # 특정 상태만
+```
+
+```json
+{ "tasks": [ … ], "total": 64 }
 ```
 
 **기본이 진행 중만인 이유는 이게 UI의 폴링 경로이기 때문이다.** 완료건까지 초 단위로
 실어 나르면 payload가 그냥 커진다. 끝난 것까지 보려면 `view=all`을 **명시**해야 한다.
+
+`total`은 페이지 크기와 무관한 전체 수이고 필터를 반영한다 — 화면이 페이지 수를
+계산하는 데 쓴다. `limit`은 1–200으로 잘린다.
 
 ### Task 상세 — 본문 + 감사 타임라인
 
@@ -444,6 +452,7 @@ Worker가 자기 키로 대신 부른다.
 curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"labels":["demo","mail"]}'
 curl -X POST "$WORKER/ui/labels" -H "$JSON" -d '{"reset":true}'      # 설정 파일 값으로
 curl -X POST "$WORKER/ui/concurrency" -H "$JSON" -d '{"concurrency":3}'
+curl -X POST "$WORKER/ui/default-agent" -H "$JSON" -d '{"agent":"claude-code"}'
 ```
 
 **라벨은 다음 claim부터 적용된다.** 채널은 운영 중에 생기므로, 새 채널의 일을 받으려고
@@ -453,6 +462,10 @@ curl -X POST "$WORKER/ui/concurrency" -H "$JSON" -d '{"concurrency":3}'
 승인하기를 기다리는 작업을 중간에 끊을 수는 없기 때문이다. 줄이는 중에는
 `/ui/state`의 `runningLoops`가 `concurrency`보다 크게 보인다.
 
+**기본 에이전트도 여기서 정한다.** Task마다 드롭다운으로 고르는 방법만 있으면
+`pending`인 2초 남짓을 노려야 해서 잘 안 먹는다 — "내 일은 다 이걸로 돌린다"는
+한 번 정해두는 게 맞다.
+
 바꾼 값은 `~/.samdi/worker-state.json`에 남아 재시작해도 유지된다. 설정 파일(YAML)은
 건드리지 않는다 — 손으로 적은 설정과 화면에서 만진 값이 한 파일에서 섞이면 무엇이
 진실인지 알 수 없게 되기 때문이다. `/ui/state`가 둘을 함께 준다(`labels`,
@@ -460,6 +473,19 @@ curl -X POST "$WORKER/ui/concurrency" -H "$JSON" -d '{"concurrency":3}'
 
 > 서버가 라벨 변경을 알게 되는 건 **다음 claim 때**다. Worker가 일을 처리하는 동안에는
 > 폴링을 쉬므로, 그동안은 관리 화면의 `coveredLabels`가 옛 값으로 보인다.
+
+### Task별 에이전트 지정 — 두 시점에 가능하다
+
+```sh
+curl -X POST "$WORKER/ui/tasks/$TASK_ID/agent" -H "$JSON" -d '{"agent":"claude-code"}'
+```
+
+아직 아무도 안 집었으면(`pending`) 서버의 Task에 박고, **이미 집혀서 승인을 기다리는
+중이면 Worker가 들고 있다가 시작할 때 쓴다.** 어댑터는 승인 이후에 정해지므로 후자도
+실제로 반영된다 — 응답의 `where`가 어느 쪽이었는지 알려준다(`worker` | 서버 응답).
+
+이렇게 한 이유는 `pending`이 폴링 주기(2초)만큼밖에 안 가서, 그 창을 노려 드롭다운을
+조작하는 게 사실상 불가능했기 때문이다.
 
 ### 막힌 Task를 사람이 끝내기
 

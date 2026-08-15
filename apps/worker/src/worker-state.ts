@@ -16,11 +16,13 @@ import path from 'node:path';
 export interface WorkerDefaults {
   labels: string[];
   concurrency: number;
+  defaultAgent: string;
 }
 
 interface Overrides {
   labels?: string[];
   concurrency?: number;
+  defaultAgent?: string;
 }
 
 export class WorkerState {
@@ -42,11 +44,17 @@ export class WorkerState {
     return this.overrides.concurrency ?? this.configured.concurrency;
   }
 
+  /** Task에 지정이 없을 때 쓸 에이전트 */
+  get defaultAgent(): string {
+    return this.overrides.defaultAgent ?? this.configured.defaultAgent;
+  }
+
   /** 설정값과 다른 값을 쓰고 있는가 — 화면이 "되돌리기"를 보여줄지 정한다. */
-  get overridden(): { labels: boolean; concurrency: boolean } {
+  get overridden(): { labels: boolean; concurrency: boolean; defaultAgent: boolean } {
     return {
       labels: this.overrides.labels !== undefined,
       concurrency: this.overrides.concurrency !== undefined,
+      defaultAgent: this.overrides.defaultAgent !== undefined,
     };
   }
 
@@ -73,6 +81,18 @@ export class WorkerState {
     }
     this.patch({ concurrency: n === this.configured.concurrency ? undefined : n });
     return this.concurrency;
+  }
+
+  /**
+   * 기본 에이전트를 바꾼다. 다음에 시작되는 Task부터 적용된다.
+   *
+   * Task별로 고르는 드롭다운만 있으면 pending인 짧은 순간을 노려야 해서 잘 안 먹는다.
+   * "내 일은 다 이걸로 돌린다"는 이쪽에서 정하는 게 맞다.
+   */
+  setDefaultAgent(agent: string, known: string[]): string {
+    if (!known.includes(agent)) throw new Error(`모르는 에이전트다: ${agent}`);
+    this.patch({ defaultAgent: agent === this.configured.defaultAgent ? undefined : agent });
+    return this.defaultAgent;
   }
 
   /** 설정 파일 값으로 되돌린다. */
@@ -114,6 +134,9 @@ function read(file: string): Overrides {
     }
     if (typeof raw.concurrency === 'number' && Number.isInteger(raw.concurrency)) {
       if (raw.concurrency >= 1 && raw.concurrency <= 32) out.concurrency = raw.concurrency;
+    }
+    if (typeof raw.defaultAgent === 'string' && raw.defaultAgent.trim() !== '') {
+      out.defaultAgent = raw.defaultAgent;
     }
     return out;
   } catch {

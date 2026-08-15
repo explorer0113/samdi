@@ -18,6 +18,8 @@ export interface PendingApproval {
   taskId: string;
   question: string;
   askedAt: string;
+  /** 승인 화면에서 사용자가 고른 에이전트 (안 골랐으면 undefined) */
+  agent?: string;
 }
 
 export interface UiState {
@@ -29,9 +31,11 @@ export interface UiState {
   /** 실제로 도는 루프 수. 줄이는 중이면 concurrency보다 클 수 있다. */
   runningLoops: number;
   /** 설정 파일에 적힌 값. "되돌리기"의 목적지다. */
-  configured: { labels: string[]; concurrency: number };
+  /** Task에 지정이 없을 때 쓸 에이전트 */
+  defaultAgent: string;
+  configured: { labels: string[]; concurrency: number; defaultAgent: string };
   /** 설정값과 다른 값을 쓰고 있는가 */
-  overridden: { labels: boolean; concurrency: boolean };
+  overridden: { labels: boolean; concurrency: boolean; defaultAgent: boolean };
   controlPlaneUrl: string;
   /** 동시에 처리 중인 Task들 */
   current: CurrentTask[];
@@ -65,6 +69,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 export interface AgentsInfo {
   agents: string[];
   default: string;
+  configuredDefault: string;
 }
 
 export const api = {
@@ -87,6 +92,9 @@ export const api = {
   /** 동시에 처리할 수. 늘리면 즉시, 줄이면 진행 중인 일이 끝난 뒤 반영된다. */
   setConcurrency: (concurrency: number) =>
     post<{ concurrency: number; running: number }>('/ui/concurrency', { concurrency }),
+  /** 기본 에이전트. Task별로 고르는 것과 달리 시점을 놓칠 일이 없다. */
+  setDefaultAgent: (agent: string) =>
+    post<{ default: string; overridden: boolean }>('/ui/default-agent', { agent }),
   /**
    * 사람이 직접 종료 처리한다 — 에이전트가 보고 없이 끝난 Task를 푸는 길.
    * 두면 lease가 만료될 때까지 Worker를 붙들고 있어 뒤가 막힌다.

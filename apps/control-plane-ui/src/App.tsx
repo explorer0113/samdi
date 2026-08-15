@@ -16,6 +16,9 @@ function timeOf(iso: string): string {
   return new Date(iso).toLocaleTimeString('ko-KR', { hour12: false });
 }
 
+/** 한 페이지에 보여줄 Task 수 */
+const PAGE_SIZE = 25;
+
 /** 진행 중으로 볼 상태들. 나머지는 종결분이다. */
 const ACTIVE = ['pending', 'claimed', 'running', 'waiting', 'stalled'];
 
@@ -61,6 +64,8 @@ export function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [view, setView] = useState<'all' | 'active'>('all');
+  const [page, setPage] = useState(0);
+  const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   /** 발급 직후 한 번만 보여주는 평문 키. 새로고침하면 다시 볼 수 없다. */
@@ -78,15 +83,20 @@ export function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [o, c, t] = await Promise.all([api.overview(), api.channels(), api.tasks(view)]);
+      const [o, c, t] = await Promise.all([
+        api.overview(),
+        api.channels(),
+        api.tasks(view, PAGE_SIZE, page * PAGE_SIZE),
+      ]);
       setOverview(o);
       setChannels(c.channels);
       setTasks(t.tasks);
+      setTotal(t.total);
       setError(null);
     } catch (err) {
       handleError(err);
     }
-  }, [view, handleError]);
+  }, [view, page, handleError]);
 
   useEffect(() => {
     if (!authed) return;
@@ -180,18 +190,41 @@ export function App() {
               <div className="toggle">
                 <button
                   className={`small ${view === 'all' ? 'on' : ''}`}
-                  onClick={() => setView('all')}
+                  onClick={() => {
+                    setView('all');
+                    setPage(0);
+                  }}
                 >
                   전체
                 </button>
                 <button
                   className={`small ${view === 'active' ? 'on' : ''}`}
-                  onClick={() => setView('active')}
+                  onClick={() => {
+                    setView('active');
+                    setPage(0);
+                  }}
                 >
                   진행 중
                 </button>
               </div>
             </div>
+            {total > PAGE_SIZE && (
+              <div className="pager">
+                <button className="small" disabled={page === 0} onClick={() => setPage(page - 1)}>
+                  ← 이전
+                </button>
+                <span>
+                  {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total}
+                </span>
+                <button
+                  className="small"
+                  disabled={(page + 1) * PAGE_SIZE >= total}
+                  onClick={() => setPage(page + 1)}
+                >
+                  다음 →
+                </button>
+              </div>
+            )}
             {tasks.length === 0 ? (
               <p className="empty">Task가 없습니다. 왼쪽 채널에서 이벤트를 넣어보세요.</p>
             ) : (

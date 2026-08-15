@@ -261,3 +261,24 @@ tbody tr.question-row td {
 }
 .concurrency b { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 14px; text-align: center; }
 .concurrency .detail { color: var(--amber); }
+
+/* 기본 에이전트 — Task별로 고를 시점을 놓쳐도 여기서 정해둘 수 있다 */
+.default-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.default-agent select {
+  font: inherit;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+.default-agent .detail { color: var(--amber); }

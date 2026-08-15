@@ -62,18 +62,18 @@ describe('TaskStore', () => {
     const live = await store.createTask('demo', 'demo', '진행 중');
 
     // 기본(active): 종결된 것은 빠진다
-    expect(store.listTasks().map((t) => t.id)).toEqual([live.id]);
+    expect(store.listTasks().tasks.map((t) => t.id)).toEqual([live.id]);
     // view: 'all': 전부, 최신 생성순
-    expect(store.listTasks({ view: 'all' }).map((t) => t.id)).toEqual([live.id, done.id]);
+    expect(store.listTasks({ view: 'all' }).tasks.map((t) => t.id)).toEqual([live.id, done.id]);
     // status 명시: 그 상태만
-    expect(store.listTasks({ status: 'completed' }).map((t) => t.id)).toEqual([done.id]);
+    expect(store.listTasks({ status: 'completed' }).tasks.map((t) => t.id)).toEqual([done.id]);
   });
 
   it('목록에 limit이 걸린다 (기본 50, 상한 200)', async () => {
     for (let i = 0; i < 5; i++) await store.createTask('demo', 'demo', `t${i}`);
-    expect(store.listTasks({ limit: 2 })).toHaveLength(2);
-    expect(store.listTasks({ limit: 999 })).toHaveLength(5); // 상한을 넘겨도 안전
-    expect(store.listTasks()).toHaveLength(5);
+    expect(store.listTasks({ limit: 2 }).tasks).toHaveLength(2);
+    expect(store.listTasks({ limit: 999 }).tasks).toHaveLength(5); // 상한을 넘겨도 안전
+    expect(store.listTasks().tasks).toHaveLength(5);
   });
 
   it('claim은 lease 만료 스캔을 돌리지 않는다 (주기 스캔의 몫)', async () => {
@@ -86,11 +86,11 @@ describe('TaskStore', () => {
 
     // 다른 Worker가 claim을 시도해도 만료 처리가 일어나지 않는다
     store.claimNext('w2', ['demo'], 600);
-    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('claimed');
+    expect(store.listTasks({ view: 'all' }).tasks[0]?.status).toBe('claimed');
 
     // 주기 스캔이 돌아야 stalled가 된다
     expect(store.sweepExpiredLeases()).toBe(1);
-    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('stalled');
+    expect(store.listTasks({ view: 'all' }).tasks[0]?.status).toBe('stalled');
   });
 
   it('Worker 재시작 신고: 물고 있던 Task를 stalled로 되돌린다', async () => {
@@ -105,7 +105,7 @@ describe('TaskStore', () => {
 
     expect(store.recoverWorkerTasks('w1')).toEqual([waiting.id]);
 
-    const byId = new Map(store.listTasks({ view: 'all' }).map((t) => [t.id, t.status]));
+    const byId = new Map(store.listTasks({ view: 'all' }).tasks.map((t) => [t.id, t.status]));
     expect(byId.get(waiting.id)).toBe('stalled');
     expect(byId.get(other.id)).toBe('claimed');
 
@@ -122,7 +122,7 @@ describe('TaskStore', () => {
     store.applyReport(done.id, { type: 'started' });
     store.applyReport(done.id, { type: 'completed' });
     expect(store.recoverWorkerTasks('w1')).toEqual([]);
-    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('completed');
+    expect(store.listTasks({ view: 'all' }).tasks[0]?.status).toBe('completed');
   });
 
   it('Start Gate 기각은 rejected로 마감된다', async () => {
@@ -272,5 +272,51 @@ describe('승인 대기 중 lease 연장 (heartbeat)', () => {
     store.extendWaitingLeases('w1', [task.id], 600);
 
     expect((await store.getTaskDetail(task.id)).events).toHaveLength(before);
+  });
+});
+
+describe('페이징', () => {
+  /** 관리 화면은 종결분까지 보므로 금방 수백 건이 된다 */
+  async function seed(n: number) {
+    for (let i = 0; i < n; i++) {
+      const t = await store.createTask('demo', 'demo', `일 ${i}`);
+      // 최신순 정렬이 안정적이도록 created_at을 벌려 둔다
+      db.prepare('UPDATE tasks SET created_at = ? WHERE id = ?').run(
+        new Date(2026, 0, 1, 0, 0, i).toISOString(),
+        t.id,
+      );
+    }
+  }
+
+  it('offset으로 다음 페이지를 가져온다', async () => {
+    await seed(5);
+    const first = store.listTasks({ view: 'all', limit: 2, offset: 0 });
+    const second = store.listTasks({ view: 'all', limit: 2, offset: 2 });
+
+    expect(first.tasks).toHaveLength(2);
+    expect(second.tasks).toHaveLength(2);
+    // 겹치지 않는다
+    expect(first.tasks.map((t) => t.id)).not.toEqual(second.tasks.map((t) => t.id));
+  });
+
+  it('total은 페이지 크기와 무관하게 전체 수다 — 화면이 페이지 수를 계산한다', async () => {
+    await seed(5);
+    expect(store.listTasks({ view: 'all', limit: 2 }).total).toBe(5);
+    expect(store.listTasks({ view: 'all', limit: 200 }).total).toBe(5);
+  });
+
+  it('total은 필터를 반영한다', async () => {
+    await seed(3);
+    const all = store.listTasks({ view: 'all' });
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(all.tasks.at(-1)!.id, { type: 'started' });
+
+    expect(store.listTasks({ status: 'running' }).total).toBe(1);
+    expect(store.listTasks({ view: 'all' }).total).toBe(3);
+  });
+
+  it('마지막 페이지를 넘어가면 빈 목록', async () => {
+    await seed(3);
+    expect(store.listTasks({ view: 'all', limit: 10, offset: 100 }).tasks).toEqual([]);
   });
 });

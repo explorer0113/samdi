@@ -64,7 +64,7 @@ describe('해석 모드 (claude)', () => {
     const out = await pipeline.ingest('demo', '첫 메일');
     expect(out.taskId).toBeNull();
     expect(out.threadId).not.toBeNull();
-    expect(tasks.listTasks()).toHaveLength(0);
+    expect(tasks.listTasks().tasks).toHaveLength(0);
     expect(threads.get(out.threadId!)?.status).toBe('open');
   });
 
@@ -89,7 +89,7 @@ describe('해석 모드 (claude)', () => {
     const { threadId } = await pipeline.ingest('demo', '음...', { contextKey: 'k' });
 
     await pipeline.runDue('demo');
-    expect(tasks.listTasks()).toHaveLength(0);
+    expect(tasks.listTasks().tasks).toHaveLength(0);
     expect(threads.get(threadId!)?.status).toBe('open');
   });
 
@@ -103,7 +103,7 @@ describe('해석 모드 (claude)', () => {
 
     await pipeline.runDue('demo');
 
-    const all = tasks.listTasks();
+    const all = tasks.listTasks().tasks;
     expect(all).toHaveLength(1);
     expect(all[0]?.label).toBe('coding');
     expect(all[0]?.threadId).toBe(threadId);
@@ -125,7 +125,7 @@ describe('해석 모드 (claude)', () => {
     const { threadId } = await pipeline.ingest('demo', '[자동] 백업 완료', { contextKey: 'k' });
 
     await pipeline.runDue('demo');
-    expect(tasks.listTasks()).toHaveLength(0);
+    expect(tasks.listTasks().tasks).toHaveLength(0);
     expect(threads.get(threadId!)?.status).toBe('discarded');
   });
 
@@ -199,6 +199,6 @@ describe('해석 모드 (claude)', () => {
     await pipeline.ingest('demo', 'x', { contextKey: 'k', agent: 'claude-code' });
 
     await pipeline.runDue('demo');
-    expect(tasks.listTasks()[0]?.agent).toBe('claude-code');
+    expect(tasks.listTasks().tasks[0]?.agent).toBe('claude-code');
   });
 });

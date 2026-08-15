@@ -354,3 +354,16 @@ button.small.on { background: var(--accent); border-color: var(--accent); color:
   border-radius: 6px;
   padding: 2px 6px;
 }
+
+/* Task 페이지 이동 — 관리 화면은 종결분까지 보므로 금방 수백 건이 된다 */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pager button:disabled { opacity: 0.4; cursor: default; }
+.pager button:disabled:hover { border-color: var(--line); }

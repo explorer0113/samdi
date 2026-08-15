@@ -149,8 +149,13 @@ export const api = {
       `/admin/channels/${channelId}/events`,
       { payload },
     ),
-  /** 관리 화면은 기본이 전체다 — 끝난 것까지 보는 게 이 화면의 목적이다. */
-  tasks: (view: 'active' | 'all' = 'all', limit = 100) =>
-    get<{ tasks: TaskSummary[] }>(`/tasks?view=${view}&limit=${limit}`),
+  /**
+   * 관리 화면은 기본이 전체다 — 끝난 것까지 보는 게 이 화면의 목적이다.
+   * 그래서 금방 수백 건이 되므로 페이지로 끊는다. total로 페이지 수를 센다.
+   */
+  tasks: (view: 'active' | 'all' = 'all', limit = 25, offset = 0) =>
+    get<{ tasks: TaskSummary[]; total: number }>(
+      `/tasks?view=${view}&limit=${limit}&offset=${offset}`,
+    ),
   task: (id: string) => get<TaskDetail>(`/tasks/${id}`),
 };

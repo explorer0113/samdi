@@ -49,7 +49,7 @@ function mkWorker(overrides: Partial<WorkerDeps>): Worker {
     client: mkClient([]).client,
     gate: new AllowAllStartGate(),
     adapters: { mock: { start: async () => {} } },
-    defaultAgent: 'mock',
+    defaultAgent: () => 'mock',
     activity: new ActivityLog(),
     workerId: 'w1',
     labels: () => ['demo'],

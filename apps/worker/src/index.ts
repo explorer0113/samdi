@@ -49,7 +49,11 @@ const defaultAgent = config.defaultAgent;
 
 // 무슨 일을 받을지(labels)와 한 번에 몇 건을 감당할지(concurrency)는 이 기기의
 // 결정이다 — 화면에서 바꿀 수 있고, 설정 파일 값은 기준값으로 남는다.
-const state = new WorkerState({ labels: configuredLabels, concurrency: configuredConcurrency });
+const state = new WorkerState({
+  labels: configuredLabels,
+  concurrency: configuredConcurrency,
+  defaultAgent,
+});
 
 const app = Fastify({ logger: true });
 const activity = new ActivityLog();
@@ -66,7 +70,7 @@ const worker = new Worker({
   client,
   gate: new ApprovalStartGate(config.startGate),
   adapters,
-  defaultAgent,
+  defaultAgent: () => state.defaultAgent,
   activity,
   workerId,
   labels: () => state.labels,
@@ -182,8 +186,9 @@ app.get('/ui/state', async () => ({
   configured: state.configured,
   overridden: state.overridden,
   controlPlaneUrl,
+  defaultAgent: state.defaultAgent,
   current: worker.current,
-  approvals: worker.approvals,
+  approvals: worker.approvals.map((a) => ({ ...a, agent: worker.chosenAgent(a.taskId) })),
   activity: activity.list(),
 }));
 
@@ -203,8 +208,24 @@ app.post('/ui/tasks/:taskId/approve', async (req, reply) => {
 
 app.get('/ui/agents', async () => ({
   agents: Object.keys(adapters),
-  default: defaultAgent,
+  default: state.defaultAgent,
+  configuredDefault: state.configured.defaultAgent,
 }));
+
+/**
+ * 기본 에이전트를 바꾼다. Task별 드롭다운만 있으면 pending인 짧은 순간을 노려야 해서
+ * 잘 안 먹는다 — "내 일은 다 이걸로 돌린다"는 여기서 정한다.
+ */
+app.post('/ui/default-agent', async (req, reply) => {
+  const { agent } = (req.body ?? {}) as { agent?: string };
+  try {
+    state.setDefaultAgent(String(agent), Object.keys(adapters));
+    activity.push('default-agent:changed', undefined, state.defaultAgent);
+    return { default: state.defaultAgent, overridden: state.overridden.defaultAgent };
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
 
 /** UI 폴링 경로. 기본은 진행 중인 Task만 (종결분은 view=all로 명시해야 온다). */
 app.get('/ui/tasks', async (req) => {
@@ -212,12 +233,23 @@ app.get('/ui/tasks', async (req) => {
   return client.listTasks({ view, limit: limit ? Number(limit) : undefined });
 });
 
-/** 처리할 에이전트 지정 (pending 동안만) */
+/**
+ * 처리할 에이전트 지정.
+ *
+ * 두 시점에 가능하다. 아직 아무도 안 집었으면(pending) 서버의 Task에 박고,
+ * 이미 집혀서 승인을 기다리는 중이면 Worker가 들고 있다가 시작할 때 쓴다.
+ * 어댑터는 승인 이후에 정해지므로 후자도 실제로 반영된다 —
+ * pending인 짧은 순간을 노리지 않아도 되게 하려는 것이다.
+ */
 app.post('/ui/tasks/:taskId/agent', async (req, reply) => {
   const { taskId } = req.params as { taskId: string };
   const { agent } = (req.body ?? {}) as { agent?: string };
   if (!agent || !adapters[agent]) {
     return reply.code(400).send({ error: `unknown agent: ${agent}` });
+  }
+  if (worker.chooseAgent(taskId, agent)) {
+    activity.push('agent:chosen', taskId, agent);
+    return { ok: true, where: 'worker' };
   }
   const out = await client.setAgent(taskId, agent);
   activity.push('agent:assigned', taskId, agent);

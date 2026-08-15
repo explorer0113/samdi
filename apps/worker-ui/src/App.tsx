@@ -238,9 +238,12 @@ export function App() {
                         {t.preview}
                       </td>
                       <td className="agent-cell">
-                        {t.status === 'pending' && agents ? (
+                        {/* pending이면 서버에, 승인 대기 중이면 Worker에 지정된다.
+                            어댑터는 승인 이후에 정해지므로 후자도 실제로 반영된다 —
+                            pending인 2초 남짓을 노리지 않아도 된다. */}
+                        {(t.status === 'pending' || approvalOf(t.id)) && agents ? (
                           <select
-                            value={t.agent ?? ''}
+                            value={approvalOf(t.id)?.agent ?? t.agent ?? ''}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               if (e.target.value) void setAgent(t.id, e.target.value);
@@ -409,6 +412,8 @@ function Labels({
         )}
       </div>
 
+      {!editing && <DefaultAgent state={state} onError={onError} onChanged={onChanged} />}
+
       {editing ? (
         <>
           <div className="inject">
@@ -498,6 +503,55 @@ function Concurrency({
       )}
       {state.overridden.concurrency && !shrinking && (
         <span className="detail">설정값 {state.configured.concurrency}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 기본 에이전트. Task마다 드롭다운으로 고르는 건 pending인 2초 남짓을 노려야 해서
+ * 잘 안 먹는다 — "내 일은 다 이걸로 돌린다"는 여기서 한 번 정한다.
+ */
+function DefaultAgent({
+  state,
+  onError,
+  onChanged,
+}: {
+  state: UiState;
+  onError: (msg: string) => void;
+  onChanged: () => Promise<void>;
+}) {
+  const [agents, setAgents] = useState<AgentsInfo | null>(null);
+
+  useEffect(() => {
+    api.agents().then(setAgents).catch(() => {});
+  }, [state.defaultAgent]);
+
+  const change = async (agent: string) => {
+    try {
+      await api.setDefaultAgent(agent);
+      await onChanged();
+    } catch (err) {
+      onError(String(err));
+    }
+  };
+
+  return (
+    <div className="default-agent">
+      <span>기본 에이전트</span>
+      <select
+        value={state.defaultAgent}
+        onChange={(e) => void change(e.target.value)}
+        aria-label="기본 에이전트"
+      >
+        {(agents?.agents ?? [state.defaultAgent]).map((a) => (
+          <option key={a} value={a}>
+            {a}
+          </option>
+        ))}
+      </select>
+      {state.overridden.defaultAgent && (
+        <span className="detail">설정값 {state.configured.defaultAgent}</span>
       )}
     </div>
   );

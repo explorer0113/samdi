@@ -209,18 +209,19 @@ export function buildServer({
    * 종결분까지 보려면 view=all, 특정 상태만 보려면 status=<상태>.
    */
   app.get('/tasks', { preHandler: requireWorkerOrAdmin }, async (req) => {
-    const { status, view, limit } = req.query as {
+    const { status, view, limit, offset } = req.query as {
       status?: TaskStatus;
       view?: 'active' | 'all';
       limit?: string;
+      offset?: string;
     };
-    return {
-      tasks: store.listTasks({
-        status,
-        view,
-        limit: limit ? Number(limit) : undefined,
-      }),
-    };
+    // { tasks, total } — total은 화면이 페이지 수를 계산하는 데 쓴다.
+    return store.listTasks({
+      status,
+      view,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
   });
 
   app.get('/tasks/:taskId', { preHandler: requireWorkerOrAdmin }, async (req) => {
