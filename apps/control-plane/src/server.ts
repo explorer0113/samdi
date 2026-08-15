@@ -1,7 +1,10 @@
+import { existsSync } from 'node:fs';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { ZodError } from 'zod';
 import {
   claimRequestSchema,
+  createChannelRequestSchema,
   ingestRequestSchema,
   retryRequestSchema,
   setAgentRequestSchema,
@@ -9,6 +12,12 @@ import {
   type TaskStatus,
 } from '@samdi/protocol';
 import { InvalidTransitionError } from '@samdi/task-domain';
+import {
+  ChannelExistsError,
+  ChannelNotEditableError,
+  ChannelNotFoundError,
+  type ChannelRegistry,
+} from './channel-registry.js';
 import type { Db } from './db.js';
 import type { Pipeline } from './pipeline.js';
 import { TaskNotFoundError, TaskNotPendingError, type TaskStore } from './task-store.js';
@@ -20,8 +29,14 @@ export interface ServerDeps {
   /** 수집기 → 해석기 → 분배기 */
   pipeline: Pipeline;
   threads: ThreadStore;
-  /** MVP: Worker/관리 요청 공용 키. 개별 Worker 등록·키 발급은 이후 단계. */
+  /** 채널 목록·키의 주인 */
+  channels: ChannelRegistry;
+  /** Worker가 claim·보고에 쓰는 키 */
   workerKey: string;
+  /** 관리 화면이 쓰는 키. 전체 조회와 채널 등록·키 발급 권한. */
+  adminKey: string;
+  /** 빌드된 관리 UI 경로. 주면 서버가 `/`로 직접 서빙한다. */
+  uiDist?: string;
   logger?: boolean;
 }
 
@@ -30,7 +45,10 @@ export function buildServer({
   store,
   pipeline,
   threads,
+  channels,
   workerKey,
+  adminKey,
+  uiDist,
   logger = true,
 }: ServerDeps) {
   const app = Fastify({ logger });
@@ -42,13 +60,26 @@ export function buildServer({
     if (err instanceof InvalidTransitionError || err instanceof TaskNotPendingError) {
       return reply.code(409).send({ error: err.message });
     }
-    if (err instanceof TaskNotFoundError) {
+    if (err instanceof TaskNotFoundError || err instanceof ChannelNotFoundError) {
       return reply.code(404).send({ error: err.message });
+    }
+    if (err instanceof ChannelExistsError) {
+      return reply.code(409).send({ error: err.message });
+    }
+    if (err instanceof ChannelNotEditableError) {
+      return reply.code(403).send({ error: err.message });
     }
     app.log.error(err);
     return reply.code(500).send({ error: 'internal error' });
   });
 
+  /**
+   * 인증은 세 갈래다. 키마다 할 수 있는 일이 다르다는 게 요점이다.
+   *  - 채널 키  : 그 채널로 이벤트를 넣는 것만
+   *  - Worker 키: 일을 가져가고(claim) 결과를 보고하는 것
+   *  - 관리 키  : 전체 조회와 채널 등록·키 발급
+   * Worker가 뚫려도 채널을 만들거나 전체를 훑을 수 없어야 하므로 뒤 둘을 나눈다.
+   */
   const requireWorkerKey = (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
     if (req.headers['x-worker-key'] !== workerKey) {
       reply.code(401).send({ error: 'invalid worker key' });
@@ -57,32 +88,50 @@ export function buildServer({
     done();
   };
 
+  const requireAdminKey = (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
+    if (req.headers['x-admin-key'] !== adminKey) {
+      reply.code(401).send({ error: 'invalid admin key' });
+      return;
+    }
+    done();
+  };
+
+  /**
+   * Worker와 관리 화면이 함께 보는 경로. Worker는 자기가 집을 Task를 봐야 하고,
+   * 관리 화면은 전체를 봐야 한다 — 둘 다 정당하므로 어느 키든 받는다.
+   */
+  const requireWorkerOrAdmin = (req: FastifyRequest, reply: FastifyReply, done: () => void) => {
+    if (req.headers['x-worker-key'] === workerKey || req.headers['x-admin-key'] === adminKey) {
+      done();
+      return;
+    }
+    reply.code(401).send({ error: 'invalid key' });
+  };
+
   app.get('/health', async () => ({ ok: true }));
 
   /** 외부 이벤트 수신. 채널별 키로 인증하며, 본문은 해석하지 않고 그대로 저장한다. */
   app.post('/channels/:channelId/events', async (req, reply) => {
     const { channelId } = req.params as { channelId: string };
-    const channel = db
-      .prepare('SELECT id, label, key FROM channels WHERE id = ?')
-      .get(channelId) as { id: string; label: string; key: string } | undefined;
-    if (!channel) return reply.code(404).send({ error: 'unknown channel' });
-    if (req.headers['x-channel-key'] !== channel.key) {
-      return reply.code(401).send({ error: 'invalid channel key' });
+    const channel = channels.authenticate(channelId, req.headers['x-channel-key'] as string);
+    if (!channel) {
+      // 없는 채널인지 키가 틀린 건지 구분해서 알려주지 않는다 — 채널 id를 훑는 데 쓰인다.
+      return reply.code(401).send({ error: 'unknown channel or invalid channel key' });
     }
     const body = ingestRequestSchema.parse(req.body);
-    return pipeline.ingest(channel.id, body.payload, {
+    return pipeline.ingest(channel.config.id, body.payload, {
       agent: body.agent,
       contextKey: body.contextKey,
     });
   });
 
   /** 문맥 스레드 관찰용 (llm 모드 채널) */
-  app.get('/channels/:channelId/threads', { preHandler: requireWorkerKey }, async (req) => {
+  app.get('/channels/:channelId/threads', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { channelId } = req.params as { channelId: string };
     return { threads: threads.listByChannel(channelId) };
   });
 
-  app.get('/threads/:threadId', { preHandler: requireWorkerKey }, async (req, reply) => {
+  app.get('/threads/:threadId', { preHandler: requireWorkerOrAdmin }, async (req, reply) => {
     const { threadId } = req.params as { threadId: string };
     const thread = threads.get(threadId);
     if (!thread) return reply.code(404).send({ error: `thread not found: ${threadId}` });
@@ -113,7 +162,7 @@ export function buildServer({
   });
 
   /** 처리할 에이전트 지정 — pending 동안만 가능 */
-  app.post('/tasks/:taskId/agent', { preHandler: requireWorkerKey }, async (req) => {
+  app.post('/tasks/:taskId/agent', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { taskId } = req.params as { taskId: string };
     const body = setAgentRequestSchema.parse(req.body);
     const task = store.setAgent(taskId, body.agent);
@@ -121,7 +170,7 @@ export function buildServer({
   });
 
   /** stalled 수동 게이트 (MVP는 worker 키 공용, 사용자 인증 분리는 이후 단계) */
-  app.post('/tasks/:taskId/retry', { preHandler: requireWorkerKey }, async (req) => {
+  app.post('/tasks/:taskId/retry', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { taskId } = req.params as { taskId: string };
     const body = retryRequestSchema.parse(req.body);
     const task = store.resolveStalled(taskId, body.action);
@@ -132,7 +181,7 @@ export function buildServer({
    * Task 목록. 기본은 진행 중인 것만 최신순으로 (UI가 초 단위로 폴링하는 경로).
    * 종결분까지 보려면 view=all, 특정 상태만 보려면 status=<상태>.
    */
-  app.get('/tasks', { preHandler: requireWorkerKey }, async (req) => {
+  app.get('/tasks', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { status, view, limit } = req.query as {
       status?: TaskStatus;
       view?: 'active' | 'all';
@@ -147,10 +196,103 @@ export function buildServer({
     };
   });
 
-  app.get('/tasks/:taskId', { preHandler: requireWorkerKey }, async (req) => {
+  app.get('/tasks/:taskId', { preHandler: requireWorkerOrAdmin }, async (req) => {
     const { taskId } = req.params as { taskId: string };
     return store.getTaskDetail(taskId);
   });
+
+  // ── 관리 화면 (Control Plane UI) ─────────────────────────────────────────
+  // 여기 있는 것들은 서버가 소유한 전체 상태를 다룬다. Worker 키로는 닿지 않는다.
+
+  const admin = { preHandler: requireAdminKey };
+
+  /** 한 화면에 필요한 집계. 상태별 개수는 SQL로 세고 목록은 따로 부른다. */
+  app.get('/admin/overview', admin, async () => {
+    const taskCounts = db
+      .prepare('SELECT status, COUNT(*) AS n FROM tasks GROUP BY status')
+      .all() as { status: string; n: number }[];
+    const threadCounts = db
+      .prepare('SELECT status, COUNT(*) AS n FROM context_threads GROUP BY status')
+      .all() as { status: string; n: number }[];
+    // 지금 일을 물고 있는 Worker들. Worker 등록 개념이 아직 없어서 Task에서 역산한다.
+    const workers = db
+      .prepare(
+        `SELECT worker_id AS workerId, COUNT(*) AS inFlight, MAX(lease_expires_at) AS leaseExpiresAt
+         FROM tasks
+         WHERE worker_id IS NOT NULL AND status IN ('claimed','running','waiting')
+         GROUP BY worker_id`,
+      )
+      .all() as { workerId: string; inFlight: number; leaseExpiresAt: string | null }[];
+
+    const tally = (rows: { status: string; n: number }[]) =>
+      Object.fromEntries(rows.map((r) => [r.status, r.n]));
+
+    return {
+      tasks: tally(taskCounts),
+      threads: tally(threadCounts),
+      workers,
+      channels: channels.list().length,
+    };
+  });
+
+  /** 채널 목록. 키는 가려서 나간다 — 평문은 발급 응답에서만 볼 수 있다. */
+  app.get('/admin/channels', admin, async () => ({
+    channels: channels.list().map((c) => ({ ...c, maskedKey: channels.maskedKey(c.id) })),
+  }));
+
+  /**
+   * 채널 등록 + 키 발급.
+   * **응답의 key는 여기서만 볼 수 있다.** 이후 조회에서는 가려진 형태만 나간다.
+   */
+  app.post('/admin/channels', admin, async (req, reply) => {
+    const body = createChannelRequestSchema.parse(req.body);
+    const created = channels.create(body);
+    return reply.code(201).send(created);
+  });
+
+  /** 키 재발급. 예전 키는 즉시 통하지 않는다. */
+  app.post('/admin/channels/:channelId/key', admin, async (req) => {
+    const { channelId } = req.params as { channelId: string };
+    return { key: channels.rotateKey(channelId) };
+  });
+
+  /**
+   * 채널 비활성화 — 이벤트 수신을 멈춘다. 목록에는 남는다.
+   * 완전히 지우지 않는 이유는 Task·스레드가 채널을 참조하는 감사 기록이기 때문이다.
+   */
+  app.delete('/admin/channels/:channelId', admin, async (req) => {
+    const { channelId } = req.params as { channelId: string };
+    channels.disable(channelId);
+    return { ok: true };
+  });
+
+  /**
+   * 관리 화면에서 이벤트를 넣어본다 — 채널이 제대로 도는지 확인하는 도구다.
+   * 채널 키 없이 되는 이유는 관리 키가 이미 더 센 권한이기 때문이다.
+   */
+  app.post('/admin/channels/:channelId/events', admin, async (req, reply) => {
+    const { channelId } = req.params as { channelId: string };
+    if (!channels.get(channelId)) {
+      return reply.code(404).send({ error: `unknown channel: ${channelId}` });
+    }
+    const body = ingestRequestSchema.parse(req.body);
+    return pipeline.ingest(channelId, body.payload, {
+      agent: body.agent,
+      contextKey: body.contextKey,
+    });
+  });
+
+  // 빌드된 관리 화면을 같은 출처로 내보낸다 (설정된 경우에만).
+  // 위에 등록한 명시 라우트가 정적 와일드카드보다 우선한다.
+  // 화면 자체는 인증 없이 받는다 — 키를 요구하는 건 그 안에서 부르는 API다.
+  if (uiDist) {
+    if (!existsSync(uiDist)) {
+      app.log.error({ uiDist }, 'uiDist 경로가 없다 — 관리 화면을 서빙하지 않는다');
+    } else {
+      void app.register(fastifyStatic, { root: uiDist });
+      app.log.info({ uiDist }, 'serving control-plane-ui');
+    }
+  }
 
   return app;
 }

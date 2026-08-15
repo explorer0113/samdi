@@ -2,13 +2,16 @@
 
 이미지는 둘이다. **아키텍처의 두 평면이 그대로 이미지 경계가 된다.**
 
-| 이미지 | 무엇 | Dockerfile |
-| --- | --- | --- |
-| 서버 | Control Plane — 이벤트 수집·해석·Task 보관 | `apps/control-plane/Dockerfile` |
-| 클라이언트 | Execution Plane — Worker + 대시보드 | `apps/worker/Dockerfile` |
+| 이미지 | 무엇 | 화면 | Dockerfile |
+| --- | --- | --- | --- |
+| 서버 | Control Plane — 이벤트 수집·해석·Task 보관 | 관리 화면 (:3000) | `apps/control-plane/Dockerfile` |
+| 클라이언트 | Execution Plane — Worker | Worker 화면 (:4700) | `apps/worker/Dockerfile` |
 
-대시보드는 별도 이미지가 아니다. 브라우저는 Worker의 로컬 API만 보므로,
-빌드한 정적 파일을 Worker가 같은 출처로 내보낸다 — 프록시도 CORS 설정도 없다.
+**화면은 각자의 이미지에 들어 있다.** 별도 웹 서버가 없는 이유는 각 화면이 보는 상태를
+그 프로세스가 이미 소유하고 있기 때문이다 — 같은 출처로 내보내면 프록시도 CORS 설정도 없다.
+
+- 관리 화면은 채널·전체 Task를 보므로 서버 이미지에. **관리 키가 필요하다.**
+- Worker 화면은 진행 중·승인을 보므로 클라이언트 이미지에. 루프백 전용이라 키가 없다.
 
 ## 먼저 읽을 것 — 컨테이너에서 못 하는 일
 
@@ -37,11 +40,14 @@ docker compose up --build
 SAMDI_CP_PORT=3001 SAMDI_UI_PORT=4701 docker compose up --build
 ```
 
-대시보드는 <http://127.0.0.1:4700> 이다. `pnpm dev`로 띄웠을 때의 5173이 아니다 —
-컨테이너에서는 vite 개발 서버가 없고 Worker가 UI를 직접 내보낸다.
+화면은 둘이다. `pnpm dev`로 띄웠을 때의 5173/5174가 아니다 — 컨테이너에는 vite 개발 서버가
+없고 각 프로세스가 자기 화면을 직접 내보낸다.
 
-**이벤트 주입**에 아무 내용이나 넣으면 Task가 만들어지고, 목록 행에 승인/거부 버튼이 뜬다.
-승인하면 mock 에이전트가 실행되고 완료 보고까지 돌아온다.
+- 관리 화면 <http://127.0.0.1:3000> — 관리 키 `demo-admin-key`를 넣고 들어간다
+- Worker 화면 <http://127.0.0.1:4700> — 키 없이 열린다
+
+관리 화면의 채널 옆 **이벤트 넣기**로 아무 내용이나 보내면 Task가 만들어지고,
+Worker 화면 목록 행에 승인/거부 버튼이 뜬다. 승인하면 mock 에이전트가 돌고 완료 보고가 돌아온다.
 
 외부 웹훅을 흉내내려면:
 
@@ -109,7 +115,8 @@ services:
 | 환경변수 | 이미지 기본값 | 왜 |
 | --- | --- | --- |
 | `SAMDI_HOST` (서버) | `0.0.0.0` | 컨테이너 안에서 루프백에 묶으면 아무도 못 닿는다 |
-| `SAMDI_DB_PATH` (서버) | `/data/samdi.sqlite` | 볼륨에 둬야 재시작해도 Task가 남는다 |
+| `SAMDI_DB_PATH` (서버) | `/data/samdi.sqlite` | 볼륨에 둬야 재시작해도 Task·채널이 남는다 |
+| `SAMDI_UI_DIST` (서버) | `/app/apps/control-plane-ui/dist` | 빌드된 관리 화면을 같은 출처로 서빙 |
 | `SAMDI_REPORT_HOST` (Worker) | `0.0.0.0` | 위와 같은 이유 |
 | `SAMDI_UI_DIST` (Worker) | `/app/apps/worker-ui/dist` | 빌드된 대시보드를 같은 출처로 서빙 |
 | `SAMDI_AGENT` (Worker) | `mock` | 컨테이너에서는 `claude-code`를 못 쓴다 |
@@ -123,9 +130,12 @@ services:
 에이전트가 로컬에서 보고하는 통로라는 전제로 만들어졌기 때문이다. 이걸 열면 같은
 네트워크의 누구나 Task 완료·실패를 위조하고 승인 질문에 답할 수 있다.
 
-서버의 3000은 채널 웹훅이 들어오는 곳이라 열어야 할 수 있다. 그때는
-`samdi.server.yaml`의 채널 키를 반드시 실제 값으로 바꾼다 — 기본값 `demo-channel-key`가
-그대로면 아무나 Task를 만들 수 있다. `workerKey`도 마찬가지다.
+서버의 3000은 채널 웹훅이 들어오는 곳이라 열어야 할 수 있다. **그때는 세 키를 전부 실제
+값으로 바꾼다** — 기본값이 그대로면 아무나 Task를 만들고(`demo-channel-key`), 일을 가져가고
+(`demo-worker-key`), 채널을 등록할 수 있다(`demo-admin-key`).
+
+3000을 열면 관리 화면도 같이 열린다는 점에 주의한다. 화면 자체는 인증 없이 받지만
+그 안의 API는 전부 관리 키를 요구하므로, 키만 제대로 바꾸면 조회는 막힌다.
 
 ## 잘 안 될 때
 

@@ -72,6 +72,4 @@ export const api = {
     post<{ task: Task }>(`/ui/tasks/${id}/resolve`, { action }),
   approve: (id: string, decision: 'approve' | 'deny') =>
     post<{ ok: boolean }>(`/ui/tasks/${id}/approve`, { decision }),
-  inject: (payload: string, agent?: string) =>
-    post<{ taskId: string }>('/ui/demo/inject', { payload, ...(agent ? { agent } : {}) }),
 };

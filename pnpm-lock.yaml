@@ -32,6 +32,9 @@ importers:
 
   apps/control-plane:
     dependencies:
+      '@fastify/static':
+        specifier: ^10.1.3
+        version: 10.1.3
       '@samdi/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -60,6 +63,31 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.23.9
+
+  apps/control-plane-ui:
+    dependencies:
+      '@samdi/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.0
+        version: 19.2.4(@types/react@19.2.18)
+      '@vitejs/plugin-react':
+        specifier: ^4.3.4
+        version: 4.7.0(vite@6.4.3(@types/node@22.20.1)(tsx@4.23.9)(yaml@2.9.0))
+      vite:
+        specifier: ^6.0.0
+        version: 6.4.3(@types/node@22.20.1)(tsx@4.23.9)(yaml@2.9.0)
 
   apps/demo-cli:
     dependencies:

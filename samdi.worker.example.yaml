@@ -3,9 +3,9 @@
 
 controlPlane:
   url: http://127.0.0.1:3000
+  # 서버의 workerKey와 같아야 한다. Worker는 관리 키를 모른다 —
+  # claim과 보고만 하면 되고, 채널 등록·전체 조회는 관리 화면의 몫이다.
   workerKey: demo-worker-key
-  # 데모 이벤트 주입(UI의 "이벤트 주입", demo-cli)에만 쓰인다
-  channelKey: demo-channel-key
 
 worker:
   id: worker-1

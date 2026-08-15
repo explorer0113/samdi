@@ -5,13 +5,20 @@ port: 3000
 host: 127.0.0.1
 dbPath: samdi.sqlite
 
-# Worker가 claim/보고에 사용하는 공용 키
-workerKey: demo-worker-key
+# 키는 둘로 나뉜다. 권한 범위가 다르기 때문이다.
+# Worker 하나가 뚫려도 채널을 만들거나 전체를 훑을 수는 없어야 한다.
+workerKey: demo-worker-key   # Worker: claim과 보고만
+adminKey: demo-admin-key     # 관리 화면: 전체 조회, 채널 등록·키 발급
+
+# 빌드된 관리 화면을 서버가 직접 서빙할 경로.
+# 개발 중에는 vite 개발 서버를 쓰므로 비워둔다 (컨테이너에서만 쓴다).
+# uiDist: ./apps/control-plane-ui/dist
 
 # lease 만료 스캔 주기 (밀리초). 만료된 Task는 stalled로 옮겨진다.
 sweepIntervalMs: 30000
 
-# 웹훅을 받을 채널. 시작할 때 DB로 동기화된다.
+# 웹훅을 받을 채널. 시작할 때 DB로 동기화된다 — 여기 적은 채널은 파일이 진실이라
+# 관리 화면에서 고칠 수 없다. 화면에서 만든 채널은 DB에만 있고 여기 나타나지 않는다.
 # 엔드포인트: POST /channels/<id>/events  (헤더 x-channel-key: <key>)
 channels:
   # 기본값은 passthrough — LLM을 전혀 쓰지 않고 이벤트 하나가 곧 Task 하나가 된다.

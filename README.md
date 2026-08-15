@@ -111,14 +111,25 @@ pnpm install
 pnpm dev
 ```
 
-`pnpm dev`가 Control Plane(:3000) → Worker(:4700) → Worker UI(:5173)를 순서대로 띄우고,
-로그를 `[cp]` `[worker]` `[ui]`로 구분해 보여준다. **Ctrl+C 한 번으로 셋 다 정리된다.**
-포트를 바꾸려면 `PORT=3001 SAMDI_REPORT_PORT=4701 UI_PORT=5174 pnpm dev`.
+`pnpm dev`가 Control Plane(:3000) → 관리 UI(:5174) → Worker(:4700) → Worker UI(:5173)를
+띄우고, 로그를 `[cp]` `[admin]` `[worker]` `[ui]`로 구분해 보여준다.
+**Ctrl+C 한 번으로 전부 정리된다.**
+
+**화면이 둘인 이유는 평면이 둘이기 때문이다.**
+
+| 화면 | 주소 | 무엇을 보나 | 키 |
+| --- | --- | --- | --- |
+| 관리 UI | <http://localhost:5174> | 서버가 소유한 전체 상태 — 채널 등록·키 발급, 전체 Task, Worker 현황 | 관리 키 (`demo-admin-key`) |
+| Worker UI | <http://localhost:5173> | 내 기기에서 벌어지는 일 — 진행 중인 Task, 승인/거부, 활동 로그 | 없음 (루프백 전용) |
+
+포트를 바꾸려면 `PORT=3001 ADMIN_UI_PORT=5175 SAMDI_REPORT_PORT=4701 UI_PORT=5174 pnpm dev`.
 
 컨테이너로 돌리려면 (서버·클라이언트 이미지 두 개):
 
 ```sh
-docker compose up --build     # 대시보드 http://127.0.0.1:4700
+docker compose up --build
+# 관리 화면   http://127.0.0.1:3000
+# Worker 화면 http://127.0.0.1:4700
 ```
 
 `claude-code` 어댑터는 macOS Terminal을 열어야 해서 컨테이너 안에서는 못 쓴다.
@@ -129,20 +140,23 @@ docker compose up --build     # 대시보드 http://127.0.0.1:4700
 
 ```sh
 pnpm --filter @samdi/control-plane dev
+pnpm --filter @samdi/control-plane-ui dev
 pnpm --filter @samdi/worker dev
 pnpm --filter @samdi/worker-ui dev
 ```
 
-브라우저에서 <http://localhost:5173> 을 열고 **이벤트 주입**에 아무 내용이나 넣으면,
-Task가 만들어져 claim → Start Gate → mock 에이전트 → 완료까지 흐르는 걸 볼 수 있다.
-Task를 클릭하면 본문과 감사 이벤트 타임라인이 보인다.
+관리 UI(<http://localhost:5174>)에서 관리 키를 넣고, 채널 옆의 **이벤트 넣기**에 아무 내용이나
+보내면 Task가 만들어진다. 그 Task가 claim → Start Gate → 에이전트 → 완료까지 흐르는 과정은
+Worker UI(<http://localhost:5173>)에서 보고, 승인도 거기서 한다 — **결정은 사용자 기기에서
+내려진다**는 게 이 프로젝트의 전제다.
 
-- **모든 Task는 시작 전 승인을 받는다**(기본 정책) → 목록 행에 승인/거부 버튼이 뜬다.
+- **모든 Task는 시작 전 승인을 받는다**(기본 정책) → Worker UI의 목록 행에 승인/거부 버튼이 뜬다.
   면제할 채널·라벨은 `startGate.autoPassLabels`/`autoPassChannels`로 정한다.
-- 주입 폼의 드롭다운에서 **에이전트를 고를 수 있다**(`mock` / `claude-code`).
+- Worker UI에서 Task별로 **에이전트를 고를 수 있다**(`mock` / `claude-code`).
 - 한 번에 한 건씩 처리한다. 동시에 여러 건을 돌리려면 `worker.concurrency`를 올린다.
-- 목록은 **진행 중인 Task만** 보여준다(초 단위로 폴링하므로). 끝난 것까지 보려면
-  `./apps/demo-cli`의 `pnpm start list` 또는 `GET /tasks?view=all` — 전용 화면은 이후 단계다.
+- Worker UI 목록은 **진행 중인 Task만** 보여준다(초 단위로 폴링하므로).
+  완료·실패까지 보려면 관리 UI를 쓴다.
+- 관리 UI에서 **채널을 등록하면 키가 발급된다.** 평문 키는 그때 한 번만 보인다.
 
 외부 웹훅이 하는 일(채널로 이벤트 전송)은 스크립트로 흉내낼 수 있다:
 
@@ -197,10 +211,11 @@ cp samdi.worker.example.yaml samdi.worker.yaml   # Worker
 
 ```
 apps/
-  control-plane/   수집기 → 해석기 → 분배기 + Task 상태/생명주기 API
-  worker/          claim → Start Gate → 어댑터 → 보고 중계 (+ UI용 로컬 API)
-  worker-ui/       사용자 기기 대시보드 (React + Vite)
-  demo-cli/        end-to-end 조작용 CLI
+  control-plane/     수집기 → 해석기 → 분배기 + Task 상태/생명주기 API + 채널 레지스트리
+  control-plane-ui/  관리 화면 — 채널 등록·키 발급, 전체 Task, 현황 (React + Vite)
+  worker/            claim → Start Gate → 어댑터 → 보고 중계 (+ UI용 로컬 API)
+  worker-ui/         사용자 기기 대시보드 — 진행 중·승인 (React + Vite)
+  demo-cli/          end-to-end 조작용 CLI
 
 packages/
   config/          YAML 설정 스키마·로더 (env > 파일 > 기본값)
@@ -212,8 +227,12 @@ packages/
   tool-sdk/        에이전트에게 붙여줄 MCP 도구 (예정)
 ```
 
-브라우저는 Worker의 로컬 API만 본다. Control Plane 접근은 Worker가 자기 키로 프록시하므로
-UI에 키가 노출되지 않고, 승인·재시도 같은 사용자 결정은 사용자 기기에서 내려진다.
+**두 화면은 상대하는 대상이 달라서 인증도 다르다.** Worker UI는 Worker의 로컬 API만 보고,
+Control Plane 접근은 Worker가 자기 키로 프록시하므로 브라우저에 키가 없다 — 애초에 사용자
+기기 안에서 도는 화면이기 때문이다. 관리 UI는 서버를 상대하므로 관리 키를 직접 들고 있는다.
+
+키는 셋이고 권한 범위가 각각 다르다: **채널 키**(이벤트 넣기) / **Worker 키**(claim·보고) /
+**관리 키**(전체 조회·채널 등록). Worker 하나가 뚫려도 채널을 만들거나 전체를 훑을 수 없다.
 
 ## 개발
 

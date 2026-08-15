@@ -1,7 +1,10 @@
-# Control Plane (서버) 이미지.
+# Control Plane (서버) 이미지 — 관리 화면 포함.
 #
 # 이쪽이 배포되는 쪽이다. 이벤트를 받아 해석하고 Task를 만들어 보관한다.
 # 자격 증명도 도구도 여기 없다 — 경계가 곧 권한이다(README의 아키텍처 참조).
+#
+# 관리 화면(control-plane-ui)을 같은 이미지에 담는다. 그 화면이 보는 것이
+# 이 서버가 소유한 상태이므로 여기 붙어 있는 게 자연스럽다.
 #
 # 빌드는 저장소 루트에서:
 #   docker build -f apps/control-plane/Dockerfile -t samdi-control-plane .
@@ -20,7 +23,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ \
  && rm -rf /var/lib/apt/lists/*
 COPY . .
-RUN pnpm install --frozen-lockfile --filter @samdi/control-plane...
+RUN pnpm install --frozen-lockfile \
+      --filter @samdi/control-plane... \
+      --filter @samdi/control-plane-ui...
+RUN pnpm --filter @samdi/control-plane-ui build
 
 # ── 실행 ───────────────────────────────────────────────────────────────────
 FROM base AS runtime
@@ -29,7 +35,8 @@ ENV NODE_ENV=production
 # 노출 범위는 호스트에서 -p로 정한다 (docs/docker.md).
 ENV SAMDI_HOST=0.0.0.0 \
     PORT=3000 \
-    SAMDI_DB_PATH=/data/samdi.sqlite
+    SAMDI_DB_PATH=/data/samdi.sqlite \
+    SAMDI_UI_DIST=/app/apps/control-plane-ui/dist
 
 COPY --from=deps --chown=node:node /app /app
 

@@ -35,7 +35,6 @@ try {
 const { config, source } = loaded;
 
 const controlPlaneUrl = config.controlPlane.url;
-const channelKey = config.controlPlane.channelKey;
 const {
   id: workerId,
   labels,
@@ -155,22 +154,6 @@ app.post('/ui/tasks/:taskId/resolve', async (req, reply) => {
   const out = await client.resolveStalled(taskId, action);
   activity.push(`manual:${action}`, taskId);
   return out;
-});
-
-/** 데모 편의: 외부 웹훅 흉내. 실제 배포에선 이벤트가 채널로 직접 들어온다. */
-app.post('/ui/demo/inject', async (req, reply) => {
-  const { payload, agent } = (req.body ?? {}) as { payload?: string; agent?: string };
-  if (!payload) return reply.code(400).send({ error: 'payload required' });
-  if (agent && !adapters[agent]) {
-    return reply.code(400).send({ error: `unknown agent: ${agent}` });
-  }
-  const res = await fetch(`${controlPlaneUrl}/channels/demo/events`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-channel-key': channelKey },
-    body: JSON.stringify({ payload, ...(agent ? { agent } : {}) }),
-  });
-  if (!res.ok) return reply.code(502).send({ error: await res.text() });
-  return res.json();
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

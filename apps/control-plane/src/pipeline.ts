@@ -11,6 +11,15 @@ export interface ChannelRuntime {
   interpreter: Interpreter;
 }
 
+/**
+ * Pipeline이 채널에 대해 필요로 하는 전부 — 하나 찾기와 전체 순회.
+ * `Map<string, ChannelRuntime>`이 그대로 만족하므로 테스트는 Map을 넘기고,
+ * 실제 서버는 DB를 소유한 ChannelRegistry를 넘긴다.
+ */
+export interface ChannelLookup extends Iterable<[string, ChannelRuntime]> {
+  get(channelId: string): ChannelRuntime | undefined;
+}
+
 export interface PipelineLog {
   info(o: object, msg?: string): void;
   error(o: object, msg?: string): void;
@@ -34,7 +43,7 @@ export class Pipeline {
   private readonly timers = new Map<string, NodeJS.Timeout>();
 
   constructor(
-    private readonly channels: Map<string, ChannelRuntime>,
+    private readonly channels: ChannelLookup,
     private readonly threads: ThreadStore,
     private readonly tasks: TaskStore,
     private readonly log: PipelineLog,

@@ -19,8 +19,6 @@ export function App() {
   const [tasks, setTasks] = useState<TaskSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
-  const [payload, setPayload] = useState('');
-  const [injectAgent, setInjectAgent] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -72,22 +70,6 @@ export function App() {
       clearInterval(timer);
     };
   }, [selectedId]);
-
-  const [injecting, setInjecting] = useState(false);
-  const inject = async () => {
-    if (!payload.trim() || injecting) return;
-    setInjecting(true);
-    try {
-      const { taskId } = await api.inject(payload.trim(), injectAgent || undefined);
-      setPayload('');
-      setSelectedId(taskId);
-      void refresh();
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setInjecting(false);
-    }
-  };
 
   const resolve = async (taskId: string, action: 'retry' | 'abandon') => {
     try {
@@ -158,40 +140,6 @@ export function App() {
           </section>
 
           <section className="card">
-            <h2>데모: 이벤트 주입</h2>
-            <div className="inject">
-              <input
-                value={payload}
-                placeholder="예: 내일 오전 회의 일정 잡아줘"
-                onChange={(e) => setPayload(e.target.value)}
-                onKeyDown={(e) => {
-                  // 한글 IME 조합 확정 시 keydown이 한 번 더 발생하므로 걸러야 중복 주입이 없다
-                  if (e.key === 'Enter' && !e.nativeEvent.isComposing) void inject();
-                }}
-              />
-              <select
-                className="inject-agent"
-                value={injectAgent}
-                onChange={(e) => setInjectAgent(e.target.value)}
-                aria-label="처리할 에이전트"
-              >
-                <option value="">기본 ({agents?.default ?? '...'})</option>
-                {agents?.agents.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
-              <button className="primary" disabled={injecting} onClick={() => void inject()}>
-                전송
-              </button>
-            </div>
-            <p className="hint">
-              기본 정책상 모든 Task는 시작 전 승인을 받습니다 — 목록 행의 승인/거부 버튼으로 결정합니다.
-            </p>
-          </section>
-
-          <section className="card">
             <h2>활동 로그</h2>
             {state && state.activity.length > 0 ? (
               <ul className="activity">
@@ -214,9 +162,10 @@ export function App() {
             <h2>진행 중인 Task</h2>
             {tasks.length === 0 ? (
               <p className="empty">
-                진행 중인 Task가 없습니다. 왼쪽에서 이벤트를 주입해보세요.
+                진행 중인 Task가 없습니다.
                 <br />
-                완료·실패·기각된 Task는 목록에서 빠집니다 (전체 조회 화면은 이후 단계).
+                이 화면은 <b>이 기기에서 벌어지는 일</b>만 보여줍니다 — 완료·실패·기각된 Task와
+                채널 관리는 Control Plane 화면에 있습니다.
               </p>
             ) : (
               <table>

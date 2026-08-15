@@ -21,6 +21,24 @@ export const ingestResponseSchema = z.object({
   threadId: z.string().nullable(),
 });
 
+/**
+ * POST /admin/channels — 채널 등록 + 키 발급 (관리 키로 인증).
+ *
+ * 해석기 설정은 여기서 검증하지 않고 서버의 설정 스키마에 맡긴다 —
+ * 채널 YAML과 같은 모양이어야 하는데, 그 정의가 @samdi/config에 있고
+ * 프로토콜이 설정 패키지에 의존하게 만들 이유는 없기 때문이다.
+ */
+export const createChannelRequestSchema = z.object({
+  /** 웹훅 경로에 그대로 들어간다: POST /channels/:id/events */
+  id: z
+    .string()
+    .min(1)
+    .regex(/^[a-z0-9][a-z0-9-]*$/, 'URL에 들어가므로 영소문자·숫자·하이픈만 쓴다'),
+  /** 라우팅 기준. 생략하면 id를 라벨로 쓴다 — Worker의 labels와 맞아야 Task가 간다. */
+  label: z.string().min(1).optional(),
+  interpreter: z.unknown().optional(),
+});
+
 /** POST /tasks/claim — Worker가 처리할 Task를 원자적으로 가져간다 (Worker API 키로 인증) */
 export const claimRequestSchema = z.object({
   workerId: z.string(),

@@ -10,10 +10,20 @@ export function openDb(path: string): Db {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.exec(`
+-- 채널은 DB가 소유한다. 설정 파일에 적은 채널은 시작 시 여기로 동기화되고,
+-- 관리 화면에서 만든 채널도 같은 테이블에 들어간다 (source로 구분).
+-- 해석기 설정을 함께 두는 이유는, 런타임에 만든 채널도 재시작 후 같은 모드로
+-- 살아나야 하기 때문이다.
 CREATE TABLE IF NOT EXISTS channels (
   id TEXT PRIMARY KEY,
   label TEXT NOT NULL,
-  key TEXT NOT NULL
+  key TEXT NOT NULL,
+  interpreter TEXT NOT NULL DEFAULT '{}',
+  source TEXT NOT NULL DEFAULT 'config',
+  created_at TEXT NOT NULL DEFAULT '',
+  -- 채널을 실제로 지우지는 않는다. Task와 스레드가 채널을 참조하는 감사 기록이라
+  -- 지우면 그 기록이 가리킬 곳을 잃는다. 비활성화된 채널은 이벤트를 받지 않는다.
+  disabled_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS payloads (
@@ -82,6 +92,10 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id, at);
   for (const sql of [
     'ALTER TABLE tasks ADD COLUMN agent TEXT',
     'ALTER TABLE tasks ADD COLUMN thread_id TEXT',
+    "ALTER TABLE channels ADD COLUMN interpreter TEXT NOT NULL DEFAULT '{}'",
+    "ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT 'config'",
+    "ALTER TABLE channels ADD COLUMN created_at TEXT NOT NULL DEFAULT ''",
+    'ALTER TABLE channels ADD COLUMN disabled_at TEXT',
   ]) {
     try {
       db.exec(sql);

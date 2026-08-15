@@ -107,10 +107,25 @@ export const serverConfigSchema = z.object({
   port: z.coerce.number().int().positive().max(65535).default(3000),
   host: z.string().min(1).default('127.0.0.1'),
   dbPath: pathString.default('samdi.sqlite'),
-  /** Worker/관리 요청 공용 키. 개별 Worker 등록·발급은 이후 단계. */
+  /**
+   * Worker가 claim·보고에 쓰는 키. 이걸로 할 수 있는 일은 "일을 가져가고 결과를 보고하는 것"뿐이다.
+   * 개별 Worker 등록·발급은 이후 단계.
+   */
   workerKey: z.string().min(1).default('demo-worker-key'),
+  /**
+   * 관리 화면(Control Plane UI)이 쓰는 키. 전체 조회와 채널 등록·키 발급을 할 수 있다.
+   *
+   * workerKey와 나누는 이유는 권한 범위가 다르기 때문이다 — Worker 하나가 뚫려도
+   * 채널을 만들거나 남의 Task를 훑을 수는 없어야 한다.
+   */
+  adminKey: z.string().min(1).default('demo-admin-key'),
   /** lease 만료 스캔 주기 (stalled로 옮기는 주기) */
   sweepIntervalMs: z.coerce.number().int().positive().default(30_000),
+  /**
+   * 빌드된 관리 화면(control-plane-ui)을 서빙할 경로. 주면 `/`로 직접 내보낸다.
+   * 개발 중에는 vite 개발 서버를 쓰므로 비워두고, 컨테이너에서는 이미지에 구운 dist를 준다.
+   */
+  uiDist: pathString.optional(),
   /** 시작 시 DB로 동기화되는 채널 목록 */
   channels: z.array(channelConfigSchema).default([
     { id: 'demo', label: 'demo', key: 'demo-channel-key' },
@@ -139,8 +154,6 @@ export const workerConfigSchema = z.object({
     .object({
       url: z.string().url().default('http://127.0.0.1:3000'),
       workerKey: z.string().min(1).default('demo-worker-key'),
-      /** 데모 이벤트 주입(UI/CLI)에만 쓰는 채널 키 */
-      channelKey: z.string().min(1).default('demo-channel-key'),
     })
     .default({}),
   worker: z

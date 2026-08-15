@@ -1,34 +1,38 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { interpreterConfigSchema } from '@samdi/config';
-import { PassthroughInterpreter } from '@samdi/interpreter';
+import { ChannelRegistry } from './channel-registry.js';
 import { openDb, type Db } from './db.js';
-import { Pipeline, type ChannelRuntime } from './pipeline.js';
+import { Pipeline } from './pipeline.js';
 import { buildServer } from './server.js';
 import { SqlitePayloadStore, TaskStore } from './task-store.js';
 import { ThreadStore } from './thread-store.js';
 
 let db: Db;
 let app: ReturnType<typeof buildServer>;
+let channels: ChannelRegistry;
 
 const noopLog = { info: () => {}, error: () => {} };
 
 beforeEach(() => {
   db = openDb(':memory:');
-  db.prepare('INSERT INTO channels (id, label, key) VALUES (?, ?, ?)').run('demo', 'demo', 'ck');
   const store = new TaskStore(db, new SqlitePayloadStore(db));
   const threads = new ThreadStore(db);
-  const channels = new Map<string, ChannelRuntime>([
-    [
-      'demo',
-      {
-        config: { id: 'demo', label: 'demo', key: 'ck', interpreter: interpreterConfigSchema.parse({}) },
-        label: 'demo',
-        interpreter: new PassthroughInterpreter(),
-      },
-    ],
+  channels = new ChannelRegistry(db);
+  channels.syncFromConfig([
+    { id: 'demo', label: 'demo', key: 'ck', interpreter: interpreterConfigSchema.parse({}) },
   ]);
+  channels.load();
   const pipeline = new Pipeline(channels, threads, store, noopLog);
-  app = buildServer({ db, store, pipeline, threads, workerKey: 'wk', logger: false });
+  app = buildServer({
+    db,
+    store,
+    pipeline,
+    threads,
+    channels,
+    workerKey: 'wk',
+    adminKey: 'ak',
+    logger: false,
+  });
 });
 
 afterEach(async () => {
@@ -36,6 +40,7 @@ afterEach(async () => {
 });
 
 const workerHeaders = { 'x-worker-key': 'wk' };
+const adminHeaders = { 'x-admin-key': 'ak' };
 
 async function ingest(payload = '테스트 이벤트'): Promise<string> {
   const res = await app.inject({
@@ -72,14 +77,22 @@ describe('인증', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('없는 채널이면 404', async () => {
-    const res = await app.inject({
+  it('없는 채널이든 키가 틀리든 똑같은 401을 준다 — 채널 id를 훑지 못하게', async () => {
+    const unknown = await app.inject({
       method: 'POST',
       url: '/channels/nope/events',
       headers: { 'x-channel-key': 'ck' },
       payload: { payload: 'x' },
     });
-    expect(res.statusCode).toBe(404);
+    const wrongKey = await app.inject({
+      method: 'POST',
+      url: '/channels/demo/events',
+      headers: { 'x-channel-key': '틀린키' },
+      payload: { payload: 'x' },
+    });
+    expect(unknown.statusCode).toBe(401);
+    expect(wrongKey.statusCode).toBe(401);
+    expect(unknown.json()).toEqual(wrongKey.json());
   });
 
   it('worker 키가 없으면 401', async () => {
@@ -219,5 +232,150 @@ describe('에러 매핑', () => {
       payload: { action: 'retry' },
     });
     expect(res.statusCode).toBe(409);
+  });
+});
+
+describe('키마다 권한이 다르다', () => {
+  it('Worker 키로는 관리 경로에 닿지 않는다', async () => {
+    for (const url of ['/admin/overview', '/admin/channels']) {
+      const res = await app.inject({ method: 'GET', url, headers: workerHeaders });
+      expect(res.statusCode, url).toBe(401);
+    }
+  });
+
+  it('관리 키로는 claim할 수 없다 — 일을 가져가는 건 Worker의 몫이다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/tasks/claim',
+      headers: adminHeaders,
+      payload: { workerId: 'w1', labels: ['demo'] },
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('Task 조회는 두 키 모두 통한다', async () => {
+    await ingest();
+    for (const headers of [workerHeaders, adminHeaders]) {
+      const res = await app.inject({ method: 'GET', url: '/tasks', headers });
+      expect(res.statusCode).toBe(200);
+    }
+  });
+
+  it('키가 없으면 401', async () => {
+    expect((await app.inject({ method: 'GET', url: '/tasks' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/admin/overview' })).statusCode).toBe(401);
+  });
+});
+
+describe('채널 등록과 키 발급', () => {
+  function createChannel(body: { id: string; label?: string; interpreter?: unknown }) {
+    return app.inject({
+      method: 'POST',
+      url: '/admin/channels',
+      headers: adminHeaders,
+      payload: body,
+    });
+  }
+
+  it('등록하면 키를 발급하고, 그 키로 바로 이벤트가 들어간다', async () => {
+    const res = await createChannel({ id: 'mail', label: 'mail' });
+    expect(res.statusCode).toBe(201);
+    const { key, channel } = res.json() as { key: string; channel: { id: string; source: string } };
+    expect(channel.source).toBe('api');
+    expect(key).toMatch(/^ch_/);
+
+    // 재시작 없이 바로 살아 있어야 한다 — 런타임 맵에도 들어갔다는 뜻이다.
+    const ingested = await app.inject({
+      method: 'POST',
+      url: '/channels/mail/events',
+      headers: { 'x-channel-key': key },
+      payload: { payload: '새 채널로 들어온 이벤트' },
+    });
+    expect(ingested.statusCode).toBe(200);
+    expect((ingested.json() as { taskId: string | null }).taskId).not.toBeNull();
+  });
+
+  it('평문 키는 발급 응답에서만 나온다 — 목록에서는 가려진다', async () => {
+    const { key } = (await createChannel({ id: 'mail' })).json() as { key: string };
+    const list = await app.inject({ method: 'GET', url: '/admin/channels', headers: adminHeaders });
+    const body = list.payload;
+    expect(body).not.toContain(key);
+    const { channels: rows } = list.json() as { channels: { id: string; maskedKey: string }[] };
+    expect(rows.find((c) => c.id === 'mail')?.maskedKey).toMatch(/…/);
+  });
+
+  it('키를 재발급하면 예전 키는 즉시 막힌다', async () => {
+    const { key: oldKey } = (await createChannel({ id: 'mail' })).json() as { key: string };
+    const rotated = await app.inject({
+      method: 'POST',
+      url: '/admin/channels/mail/key',
+      headers: adminHeaders,
+    });
+    const { key: newKey } = rotated.json() as { key: string };
+    expect(newKey).not.toBe(oldKey);
+
+    const withOld = await app.inject({
+      method: 'POST',
+      url: '/channels/mail/events',
+      headers: { 'x-channel-key': oldKey },
+      payload: { payload: '예전 키' },
+    });
+    expect(withOld.statusCode).toBe(401);
+  });
+
+  it('설정 파일에서 온 채널은 관리 화면에서 못 바꾼다', async () => {
+    const rotate = await app.inject({
+      method: 'POST',
+      url: '/admin/channels/demo/key',
+      headers: adminHeaders,
+    });
+    expect(rotate.statusCode).toBe(403);
+    const removed = await app.inject({
+      method: 'DELETE',
+      url: '/admin/channels/demo',
+      headers: adminHeaders,
+    });
+    expect(removed.statusCode).toBe(403);
+  });
+
+  it('같은 id로 두 번 등록하면 409', async () => {
+    expect((await createChannel({ id: 'mail' })).statusCode).toBe(201);
+    expect((await createChannel({ id: 'mail' })).statusCode).toBe(409);
+  });
+
+  it('URL에 못 쓰는 id는 거부한다', async () => {
+    expect((await createChannel({ id: 'My Mail!' })).statusCode).toBe(400);
+  });
+
+});
+
+describe('관리 현황', () => {
+  it('상태별 Task 수와 붙어 있는 Worker를 센다', async () => {
+    await ingest();
+    await ingest();
+    await claim();
+
+    const res = await app.inject({ method: 'GET', url: '/admin/overview', headers: adminHeaders });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      tasks: Record<string, number>;
+      workers: { workerId: string; inFlight: number }[];
+      channels: number;
+    };
+    expect(body.tasks.pending).toBe(1);
+    expect(body.tasks.claimed).toBe(1);
+    expect(body.workers).toEqual([{ workerId: 'w1', inFlight: 1, leaseExpiresAt: expect.any(String) }]);
+    expect(body.channels).toBe(1);
+  });
+
+  it('관리 화면에서는 채널 키 없이 이벤트를 넣어볼 수 있다', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/channels/demo/events',
+      headers: adminHeaders,
+      payload: { payload: '관리 화면에서 넣은 이벤트' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { taskId: string | null }).taskId).not.toBeNull();
   });
 });

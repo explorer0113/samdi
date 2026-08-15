@@ -10,7 +10,7 @@
 
 ```sh
 pnpm install
-pnpm dev                      # Control Plane(:3000) + Worker(:4700) + UI(:5173), Ctrl+C로 셋 다 정리
+pnpm dev                      # Control Plane(:3000) + 관리 UI(:5174) + Worker(:4700) + Worker UI(:5173)
 pnpm typecheck
 pnpm test                     # vitest run (전체)
 pnpm lint
@@ -77,10 +77,41 @@ Control Plane은 이벤트를 읽고 해석하고 Task를 만들어 보관하는
 편의 기능을 추가하지 않는다. 컨테이너에서 `0.0.0.0`인 것은 네임스페이스가 격리돼 있고
 호스트에서 `-p 127.0.0.1:...`로 다시 막는다는 전제다 ([docs/docker.md](docs/docker.md)).
 
-### 브라우저에 키를 주지 않는다
+### 화면 둘은 역할이 다르다 — 섞지 않는다
 
-UI는 Worker의 `/ui/*`만 본다. Control Plane 접근은 Worker가 자기 키로 프록시한다.
-UI에서 Control Plane을 직접 부르게 만들면 키가 브라우저로 나간다.
+**Worker UI**(`apps/worker-ui`)는 *이 기기에서 벌어지는 일*만 본다: 진행 중인 Task, 승인/거부,
+활동 로그. Worker의 `/ui/*`만 부르고, Control Plane 접근은 Worker가 자기 키로 프록시하므로
+브라우저에 키가 없다. 여기서 Control Plane을 직접 부르게 만들면 키가 브라우저로 나간다.
+
+**Control Plane UI**(`apps/control-plane-ui`)는 *서버가 소유한 전체 상태*를 본다: 채널 등록·키
+발급, 전체 Task, 현황. 서버를 직접 상대하므로 관리 키를 스스로 들고 있다.
+
+승인 버튼을 관리 화면에 추가하지 않는다 — 결정이 사용자 기기에서 내려진다는 게 전제다.
+반대로 채널 관리를 Worker UI에 넣지 않는다.
+
+### 키 셋은 권한 범위가 다르다
+
+| 키 | 헤더 | 할 수 있는 일 |
+| --- | --- | --- |
+| 채널 키 | `x-channel-key` | 그 채널로 이벤트 넣기 |
+| `workerKey` | `x-worker-key` | claim·보고·복구 + Task 조회 |
+| `adminKey` | `x-admin-key` | Task 조회 + 전체 현황 + 채널 등록·키 발급·비활성화 |
+
+새 라우트를 만들 때 "편하니까" `requireWorkerOrAdmin`을 붙이지 않는다.
+Worker가 뚫려도 채널을 만들 수 없어야 한다는 게 이 분리의 이유다.
+
+### 발급한 키의 평문은 한 번만 내보낸다
+
+채널 키는 발급 응답에서만 평문으로 나가고, 이후 조회에서는 `maskKey`로 가려진다.
+목록·상세 API에 평문 키를 실어 보내는 변경을 하지 않는다.
+
+### 채널은 지우지 않고 비활성화한다
+
+Task와 문맥 스레드가 채널을 참조하는 감사 기록이다. `DELETE`가 실제로 행을 지우면
+"이 Task가 어디서 왔는가"를 잃고, FK 제약에도 걸린다. `disable()`이 맞는 동작이다.
+
+설정 파일에서 온 채널(`source='config'`)은 관리 API로 바꿀 수 없다 — 파일이 진실이라
+고쳐봐야 다음 시작에 되돌아가기 때문이다.
 
 ### 폴링 기본은 진행 중인 것만
 

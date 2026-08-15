@@ -52,9 +52,22 @@ samdi의 설정 파일(YAML) 전체 키, 환경변수 매핑, 자주 하는 변�
 | `port` | 정수 1–65535 | `3000` | HTTP 포트 |
 | `host` | 문자열 | `127.0.0.1` | 바인드 주소. 외부 웹훅을 받으려면 `0.0.0.0` |
 | `dbPath` | 경로 | `samdi.sqlite` | SQLite 파일. Task 상태·본문·감사 로그가 모두 여기 |
-| `workerKey` | 문자열 | `demo-worker-key` | Worker가 claim/보고에 쓰는 공용 키. Worker 쪽 `controlPlane.workerKey`와 **같아야 한다** |
+| `workerKey` | 문자열 | `demo-worker-key` | Worker가 claim/보고에 쓰는 키. Worker 쪽 `controlPlane.workerKey`와 **같아야 한다** |
+| `adminKey` | 문자열 | `demo-admin-key` | 관리 화면이 쓰는 키. 전체 조회와 채널 등록·키 발급 권한 |
 | `sweepIntervalMs` | 양의 정수 | `30000` | lease 만료 스캔 주기. 만료된 Task를 `stalled`로 옮긴다 |
+| `uiDist` | 경로 | (없음) | 빌드된 관리 화면(`apps/control-plane-ui/dist`) 경로. 주면 서버가 `/`로 서빙한다. 개발 중에는 vite 개발 서버를 쓰므로 비워둔다 |
 | `channels` | 채널 배열 | 아래 참조 | 웹훅을 받을 채널. 시작할 때 DB로 동기화(upsert)된다 |
+
+**키가 셋인 이유는 권한 범위가 셋이기 때문이다.**
+
+| 키 | 헤더 | 할 수 있는 일 |
+| --- | --- | --- |
+| 채널 키 | `x-channel-key` | 그 채널로 이벤트를 넣는 것만 |
+| `workerKey` | `x-worker-key` | claim·보고·복구, 그리고 Task 조회 |
+| `adminKey` | `x-admin-key` | Task 조회 + 전체 현황 + 채널 등록·키 발급·비활성화 |
+
+Worker 하나가 뚫려도 채널을 만들거나 남의 Task를 훑을 수 없어야 하므로 뒤 둘을 나눈다.
+Task 조회(`GET /tasks`, `GET /tasks/:id`)는 둘 다 정당해서 어느 키로든 통한다.
 
 `channels[]` 항목:
 
@@ -64,6 +77,15 @@ samdi의 설정 파일(YAML) 전체 키, 환경변수 매핑, 자주 하는 변�
 | `key` | 문자열 | 필수 | 웹훅 인증 키. 요청 헤더 `x-channel-key`와 비교한다 |
 | `label` | 문자열 | 선택 | 라우팅 기준. 생략하면 `id`를 라벨로 쓴다. **Worker의 `worker.labels`에 이 값이 있어야 Task를 claim한다** |
 | `interpreter` | 객체 | 선택 | 이 채널의 해석 방식. 생략하면 `passthrough`(LLM 미사용) |
+
+**채널의 진실은 DB다.** 설정 파일에 적은 채널은 시작할 때마다 파일 내용으로 덮어써지고,
+관리 화면(`POST /admin/channels`)에서 만든 채널은 DB에만 있다. 그래서
+**파일에서 온 채널은 관리 화면에서 고칠 수 없다** — 고쳐봐야 다음 시작에 되돌아가기 때문이다.
+바꾸려면 파일을 고친다.
+
+채널을 지우는 API는 실제로 지우지 않고 **비활성화**한다. Task와 문맥 스레드가 채널을
+참조하는 감사 기록이라, 지우면 "이 Task가 어디서 왔는가"를 잃는다. 비활성화된 채널은
+이벤트를 받지 않지만 목록에는 남고, 같은 id로 다시 등록하면 새 키로 되살아난다.
 
 `channels` 기본값:
 
@@ -146,7 +168,6 @@ samdi가 보내는 요청:
 | --- | --- | --- | --- |
 | `controlPlane.url` | URL | `http://127.0.0.1:3000` | Control Plane 주소 |
 | `controlPlane.workerKey` | 문자열 | `demo-worker-key` | 서버의 `workerKey`와 같아야 한다 |
-| `controlPlane.channelKey` | 문자열 | `demo-channel-key` | **데모 이벤트 주입에만** 쓰인다(UI의 "이벤트 주입", demo-cli). 실제 웹훅 경로와는 무관 |
 | `worker.id` | 문자열 | `worker-1` | claim 주체 식별자. 감사 로그에 남는다 |
 | `worker.labels` | 문자열 배열 | `[demo]` | 이 Worker가 claim할 라벨 목록. 채널의 `label`과 맞아야 한다 |
 | `worker.pollIntervalMs` | 양의 정수 | `2000` | claim 폴링 주기 |
@@ -186,7 +207,9 @@ samdi가 보내는 요청:
 | `SAMDI_HOST` | `host` |
 | `SAMDI_DB_PATH` | `dbPath` |
 | `SAMDI_WORKER_KEY` | `workerKey` |
+| `SAMDI_ADMIN_KEY` | `adminKey` |
 | `SAMDI_SWEEP_INTERVAL_MS` | `sweepIntervalMs` |
+| `SAMDI_UI_DIST` | `uiDist` (관리 화면 dist) |
 | `SAMDI_CHANNEL_KEY` | `channels` 중 **id가 `demo`인 항목의 `key`만** 덮는다(데모 편의). 해당 채널이 없으면 아무 일도 없다 |
 
 **Worker**
@@ -196,7 +219,6 @@ samdi가 보내는 요청:
 | `SAMDI_WORKER_CONFIG` | (설정 파일 경로 지정) |
 | `SAMDI_CONTROL_PLANE_URL` | `controlPlane.url` |
 | `SAMDI_WORKER_KEY` | `controlPlane.workerKey` |
-| `SAMDI_CHANNEL_KEY` | `controlPlane.channelKey` |
 | `SAMDI_WORKER_ID` | `worker.id` |
 | `SAMDI_LABELS` | `worker.labels` — 콤마 구분(`mail,ops`) |
 | `SAMDI_POLL_INTERVAL_MS` | `worker.pollIntervalMs` |
@@ -317,6 +339,27 @@ curl -X POST http://127.0.0.1:3000/channels/mail/events \
 스레드 상태는 `GET /channels/<id>/threads`, 개별 스레드는 `GET /threads/<threadId>`로 본다(워커 키 필요).
 
 ### 새 채널(웹훅 수신구)을 추가한다
+
+두 가지 방법이 있고, 고르는 기준은 **"이 채널이 배포에 속하는가"** 다.
+
+**① 관리 화면에서 등록** — 재시작이 필요 없고 키가 자동 발급된다. 운영 중에 채널을
+늘리는 보통의 경우다.
+
+관리 화면(기본 <http://localhost:5174>)의 **채널** 카드에서 id를 넣고 등록하면
+키가 한 번 표시된다. **그 자리에서 복사해야 한다** — 이후에는 가려진 형태만 보인다.
+잃어버렸으면 "키 재발급"을 누른다(예전 키는 즉시 막힌다).
+
+API로도 같다:
+
+```sh
+curl -X POST http://127.0.0.1:3000/admin/channels \
+  -H 'content-type: application/json' -H 'x-admin-key: <관리 키>' \
+  -d '{"id":"mail","label":"inbox","interpreter":{"mode":"claude"}}'
+# → {"channel":{...},"key":"ch_..."}   ← 평문 키는 여기서만 나온다
+```
+
+**② 설정 파일에 적기** — 배포에 속한 채널, 즉 "이 서버라면 항상 있어야 하는" 채널일 때.
+파일이 진실이므로 시작할 때마다 파일 내용으로 덮어써지고, **관리 화면에서 고칠 수 없다.**
 
 `samdi.server.yaml`의 `channels`에 항목을 넣고 Control Plane을 재시작한다:
 

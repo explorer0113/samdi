@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# samdi 전체 스택을 한 번에 띄운다: Control Plane → Worker → Worker UI.
-# Ctrl+C 한 번으로 셋 다 정리된다.
+# samdi 전체 스택을 한 번에 띄운다:
+#   Control Plane → 관리 UI → Worker → Worker UI
+# Ctrl+C 한 번으로 전부 정리된다.
+#
+# 화면이 둘인 이유는 평면이 둘이기 때문이다 —
+# 관리 UI는 서버가 소유한 전체 상태(채널·전체 Task)를 보고,
+# Worker UI는 이 기기에서 벌어지는 일(진행 중·승인)만 본다.
 #
 # 포트는 환경변수로 바꾼다 (설정 파일에서 포트를 바꿨다면 여기도 맞춰야 한다):
-#   PORT=3000  SAMDI_REPORT_PORT=4700  UI_PORT=5173
+#   PORT=3000  SAMDI_REPORT_PORT=4700  UI_PORT=5173  ADMIN_UI_PORT=5174
 #
 # 그 밖의 설정은 평소대로 samdi.server.yaml / samdi.worker.yaml 또는
 # SAMDI_SERVER_CONFIG / SAMDI_WORKER_CONFIG 환경변수를 따른다.
@@ -15,6 +20,7 @@ cd "$ROOT"
 PORT="${PORT:-3000}"
 SAMDI_REPORT_PORT="${SAMDI_REPORT_PORT:-4700}"
 UI_PORT="${UI_PORT:-5173}"
+ADMIN_UI_PORT="${ADMIN_UI_PORT:-5174}"
 export PORT SAMDI_REPORT_PORT
 export SAMDI_CONTROL_PLANE_URL="${SAMDI_CONTROL_PLANE_URL:-http://127.0.0.1:${PORT}}"
 
@@ -81,15 +87,20 @@ fi
 echo "Worker 시작 (로컬 API :${SAMDI_REPORT_PORT})"
 run worker @samdi/worker
 
-echo "Worker UI 시작 (:${UI_PORT})"
-export UI_PORT   # vite.config.ts가 읽는다
+echo "관리 UI 시작 (:${ADMIN_UI_PORT})"
+export ADMIN_UI_PORT   # control-plane-ui의 vite.config.ts가 읽는다
+run admin @samdi/control-plane-ui
+
+echo "Worker 시작 대기 후 Worker UI 시작 (:${UI_PORT})"
+export UI_PORT   # worker-ui의 vite.config.ts가 읽는다
 run ui @samdi/worker-ui
 
 cat <<EOF
 
-  UI      http://localhost:${UI_PORT}
-  API     http://127.0.0.1:${PORT}
-  이벤트  ./scripts/send.sh "내일 회의 잡아줘"
+  관리 UI    http://localhost:${ADMIN_UI_PORT}   채널·전체 Task (관리 키: ${SAMDI_ADMIN_KEY:-demo-admin-key})
+  Worker UI  http://localhost:${UI_PORT}   진행 중·승인
+  API        http://127.0.0.1:${PORT}
+  이벤트     ./scripts/send.sh "내일 회의 잡아줘"
 
   Ctrl+C 로 전부 종료
 

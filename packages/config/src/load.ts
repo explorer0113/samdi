@@ -138,7 +138,9 @@ export function loadServerConfig(opts: LoadOptions = {}): Loaded<ServerConfig> {
     host: env.SAMDI_HOST,
     dbPath: env.SAMDI_DB_PATH,
     workerKey: env.SAMDI_WORKER_KEY,
+    adminKey: env.SAMDI_ADMIN_KEY,
     sweepIntervalMs: env.SAMDI_SWEEP_INTERVAL_MS,
+    uiDist: env.SAMDI_UI_DIST,
   }) ?? {};
 
   const config = load(serverConfigSchema, source, overrides);
@@ -178,7 +180,6 @@ export function loadWorkerConfig(opts: LoadOptions = {}): Loaded<WorkerConfig> {
       controlPlane: {
         url: env.SAMDI_CONTROL_PLANE_URL,
         workerKey: env.SAMDI_WORKER_KEY,
-        channelKey: env.SAMDI_CHANNEL_KEY,
       },
       worker: {
         id: env.SAMDI_WORKER_ID,

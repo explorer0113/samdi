@@ -1,7 +1,7 @@
 import { ConfigError, loadServerConfig } from '@samdi/config';
-import { createInterpreter } from '@samdi/interpreter';
+import { ChannelRegistry } from './channel-registry.js';
 import { openDb } from './db.js';
-import { Pipeline, type ChannelRuntime, type PipelineLog } from './pipeline.js';
+import { Pipeline, type PipelineLog } from './pipeline.js';
 import { buildServer } from './server.js';
 import { SqlitePayloadStore, TaskStore } from './task-store.js';
 import { ThreadStore } from './thread-store.js';
@@ -28,30 +28,14 @@ const { config, source } = loaded;
 
 const db = openDb(config.dbPath);
 
-// 설정의 채널 목록을 DB로 동기화한다 (선언적 채널 등록).
-const upsertChannel = db.prepare(
-  `INSERT INTO channels (id, label, key) VALUES (?, ?, ?)
-   ON CONFLICT(id) DO UPDATE SET label = excluded.label, key = excluded.key`,
-);
-for (const channel of config.channels) {
-  upsertChannel.run(channel.id, channel.label ?? channel.id, channel.key);
-}
-
 const store = new TaskStore(db, new SqlitePayloadStore(db));
 const threads = new ThreadStore(db);
 
-// 어떤 해석기를 쓸지는 채널 설정이 정한다. 내장 구현 외에는
-// createInterpreter의 두 번째 인자로 팩토리를 넘겨 확장한다.
-const channels = new Map<string, ChannelRuntime>(
-  config.channels.map((channel) => [
-    channel.id,
-    {
-      config: channel,
-      label: channel.label ?? channel.id,
-      interpreter: createInterpreter(channel.interpreter),
-    },
-  ]),
-);
+// 채널의 진실은 DB다. 설정 파일에 적은 채널은 시작할 때마다 파일 내용으로 덮어쓰고,
+// 관리 화면에서 만든 채널은 DB에만 있다가 여기서 같이 실려온다.
+const channels = new ChannelRegistry(db);
+channels.syncFromConfig(config.channels);
+channels.load();
 
 // 라우트는 파이프라인을, 파이프라인은 서버의 로거를 필요로 한다.
 // 로거 참조를 한 단계 늦춰서 순환을 푼다.
@@ -60,14 +44,23 @@ const pipeline = new Pipeline(channels, threads, store, {
   info: (o, msg) => logger.info(o, msg),
   error: (o, msg) => logger.error(o, msg),
 });
-const app = buildServer({ db, store, pipeline, threads, workerKey: config.workerKey });
+const app = buildServer({
+  db,
+  store,
+  pipeline,
+  threads,
+  channels,
+  workerKey: config.workerKey,
+  adminKey: config.adminKey,
+  uiDist: config.uiDist,
+});
 logger = app.log;
 
 app.log.info(
   {
     config: source ?? '(기본값)',
     dbPath: config.dbPath,
-    channels: config.channels.map((c) => `${c.id}:${c.interpreter.mode}`),
+    channels: channels.list().map((c) => `${c.id}:${c.interpreter.mode}(${c.source})`),
   },
   'control plane 설정 로드',
 );
