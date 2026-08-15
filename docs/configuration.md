@@ -350,13 +350,22 @@ curl -X POST http://127.0.0.1:3000/channels/mail/events \
 
 ### 포트를 바꾼다
 
+`pnpm dev`로 한 번에 띄운다면 환경변수 셋이면 된다 — 스크립트가 세 프로세스에 맞춰 넘긴다:
+
+```sh
+PORT=3001 SAMDI_REPORT_PORT=4801 UI_PORT=5174 pnpm dev
+```
+
+설정 파일에 고정하려면 서버는 `port`, Worker는 `worker.reportPort`를 쓴다:
+
 ```yaml
 # samdi.worker.yaml
 worker:
   reportPort: 4800
 ```
 
-UI 프록시도 같은 포트를 봐야 한다:
+이때 UI를 따로 띄운다면 프록시가 같은 포트를 봐야 한다
+(`vite.config.ts`가 `SAMDI_REPORT_PORT`를, UI 자신의 포트는 `UI_PORT`를 읽는다):
 
 ```sh
 SAMDI_REPORT_PORT=4800 pnpm --filter @samdi/worker-ui dev

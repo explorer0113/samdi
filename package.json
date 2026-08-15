@@ -6,6 +6,8 @@
     "node": ">=22"
   },
   "scripts": {
+    "dev": "./scripts/dev.sh",
+    "send": "./scripts/send.sh",
     "typecheck": "pnpm -r --parallel typecheck",
     "test": "vitest run",
     "lint": "eslint .",

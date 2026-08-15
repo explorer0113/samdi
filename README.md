@@ -106,18 +106,18 @@ Node.js 22+ / pnpm이 필요하다. 설정 파일 없이 데모 기본값으로 
 
 ```sh
 pnpm install
+pnpm dev
 ```
 
-터미널 세 개로:
+`pnpm dev`가 Control Plane(:3000) → Worker(:4700) → Worker UI(:5173)를 순서대로 띄우고,
+로그를 `[cp]` `[worker]` `[ui]`로 구분해 보여준다. **Ctrl+C 한 번으로 셋 다 정리된다.**
+포트를 바꾸려면 `PORT=3001 SAMDI_REPORT_PORT=4701 UI_PORT=5174 pnpm dev`.
+
+따로 띄우고 싶으면 터미널 세 개로:
 
 ```sh
-# 1) Control Plane (:3000)
-pnpm --filter @samdi/control-plane start
-
-# 2) Worker — 로컬 보고 API + UI용 API (:4700)
-pnpm --filter @samdi/worker start
-
-# 3) Worker UI (http://localhost:5173)
+pnpm --filter @samdi/control-plane dev
+pnpm --filter @samdi/worker dev
 pnpm --filter @samdi/worker-ui dev
 ```
 
@@ -127,6 +127,14 @@ Task를 클릭하면 본문과 감사 이벤트 타임라인이 보인다.
 
 - 내용에 **"승인"** 을 넣으면 mock 에이전트가 승인을 요청한다 → 목록 행에 승인/거부 버튼이 뜬다.
 - 주입 폼의 드롭다운에서 **에이전트를 고를 수 있다**(`mock` / `claude-code` / `claude-code-terminal`).
+
+외부 웹훅이 하는 일(채널로 이벤트 전송)은 스크립트로 흉내낼 수 있다:
+
+```sh
+./scripts/send.sh "내일 오전 회의 일정 잡아줘"
+./scripts/send.sh -c mail -k mail-key -x thread-42 "로그인이 안 돼요"   # 문맥 키로 묶기
+./scripts/send.sh -h                                                    # 옵션 전체
+```
 
 CLI로도 같은 조작이 된다:
 
