@@ -64,12 +64,24 @@ export interface ChannelRow {
   interpreter: InterpreterInfo;
 }
 
+export interface WorkerRow {
+  workerId: string;
+  /** 이 Worker가 claim하겠다고 밝힌 라벨 */
+  labels: string[];
+  firstSeenAt: string;
+  lastSeenAt: string;
+  inFlight: number;
+  leaseExpiresAt: string | null;
+}
+
 export interface Overview {
   /** 상태별 Task 수 */
   tasks: Record<string, number>;
   /** 상태별 문맥 스레드 수 */
   threads: Record<string, number>;
-  workers: { workerId: string; inFlight: number; leaseExpiresAt: string | null }[];
+  workers: WorkerRow[];
+  /** 최근 살아 있던 Worker들이 보는 라벨. 여기 없는 라벨은 아무도 가져가지 않는다. */
+  coveredLabels: string[];
   channels: number;
 }
 

@@ -26,6 +26,16 @@ CREATE TABLE IF NOT EXISTS channels (
   disabled_at TEXT
 );
 
+-- Worker는 따로 등록하지 않는다. claim 요청이 이미 자기 id와 라벨을 보내므로
+-- 그걸 받아 적는다 — 새 프로토콜 없이 "어떤 라벨을 보는 Worker가 있는가"를 알 수 있고,
+-- 이게 없으면 아무도 안 보는 라벨로 만든 채널의 Task가 조용히 pending에 쌓인다.
+CREATE TABLE IF NOT EXISTS workers (
+  id TEXT PRIMARY KEY,
+  labels TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS payloads (
   ref TEXT PRIMARY KEY,
   body TEXT NOT NULL,

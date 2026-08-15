@@ -6,6 +6,7 @@ import { Pipeline } from './pipeline.js';
 import { buildServer } from './server.js';
 import { SqlitePayloadStore, TaskStore } from './task-store.js';
 import { ThreadStore } from './thread-store.js';
+import { WorkerRegistry } from './worker-registry.js';
 
 let db: Db;
 let app: ReturnType<typeof buildServer>;
@@ -29,6 +30,7 @@ beforeEach(() => {
     pipeline,
     threads,
     channels,
+    workers: new WorkerRegistry(db),
     workerKey: 'wk',
     adminKey: 'ak',
     logger: false,
@@ -359,13 +361,50 @@ describe('관리 현황', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as {
       tasks: Record<string, number>;
-      workers: { workerId: string; inFlight: number }[];
+      workers: { workerId: string; labels: string[]; inFlight: number }[];
+      coveredLabels: string[];
       channels: number;
     };
     expect(body.tasks.pending).toBe(1);
     expect(body.tasks.claimed).toBe(1);
-    expect(body.workers).toEqual([{ workerId: 'w1', inFlight: 1, leaseExpiresAt: expect.any(String) }]);
+    expect(body.workers).toMatchObject([{ workerId: 'w1', labels: ['demo'], inFlight: 1 }]);
     expect(body.channels).toBe(1);
+  });
+
+  it('claim만 해도 Worker가 등록된다 — 일이 없어도 목록에 남는다', async () => {
+    // 빈손 claim (Task 없음)
+    await claim();
+
+    const body = (
+      await app.inject({ method: 'GET', url: '/admin/overview', headers: adminHeaders })
+    ).json() as { workers: { workerId: string; inFlight: number }[]; coveredLabels: string[] };
+
+    expect(body.workers).toMatchObject([{ workerId: 'w1', inFlight: 0 }]);
+    expect(body.coveredLabels).toEqual(['demo']);
+  });
+
+  it('아무도 안 보는 라벨은 coveredLabels에 없다 — 화면이 경고할 근거', async () => {
+    await claim(); // w1이 demo만 본다
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/channels',
+      headers: adminHeaders,
+      payload: { id: 'orphan-ch' }, // label 생략 → id가 라벨이 된다
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/admin/channels/orphan-ch/events',
+      headers: adminHeaders,
+      payload: { payload: '아무도 안 가져갈 이벤트' },
+    });
+
+    const body = (
+      await app.inject({ method: 'GET', url: '/admin/overview', headers: adminHeaders })
+    ).json() as { coveredLabels: string[]; tasks: Record<string, number> };
+
+    expect(body.coveredLabels).not.toContain('orphan-ch');
+    expect(body.tasks.pending).toBe(1); // 만들어졌지만 아무도 안 가져간다
   });
 
   it('관리 화면에서는 채널 키 없이 이벤트를 넣어볼 수 있다', async () => {

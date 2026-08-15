@@ -113,6 +113,15 @@ Task와 문맥 스레드가 채널을 참조하는 감사 기록이다. `DELETE`
 설정 파일에서 온 채널(`source='config'`)은 관리 API로 바꿀 수 없다 — 파일이 진실이라
 고쳐봐야 다음 시작에 되돌아가기 때문이다.
 
+### Worker 등록 API를 만들지 않는다
+
+Worker 목록은 claim 요청(`{workerId, labels}`)에서 받아 적는다. 등록 API를 따로 두면
+Worker가 그걸 부르는 걸 잊거나 등록 후 라벨을 바꿨을 때 목록이 거짓말을 하는데,
+이 방식은 실제로 일을 가져가려는 Worker만 나타나므로 어긋날 수가 없다.
+
+`lastSeenAt`으로 생존을 판단할 때는 폴링 주기보다 넉넉한 창을 잡는다 —
+일하는 동안에는 claim을 쉬기 때문이다.
+
 ### 폴링 기본은 진행 중인 것만
 
 `GET /ui/tasks`는 기본이 active-only다. 완료건까지 초 단위로 실어 나르면 payload가 그냥 커진다
@@ -150,6 +159,7 @@ vitest. 테스트 파일은 소스 옆에 `*.test.ts`로 둔다.
 ## 문서
 
 - [README.md](README.md) — 무엇이고 왜인지, 빨리 돌려보기
+- [docs/api.md](docs/api.md) — HTTP API 전체 + curl 예시
 - [docs/configuration.md](docs/configuration.md) — 설정 키 전체 + 작업 레시피
 - [docs/docker.md](docs/docker.md) — 컨테이너로 돌리기
 - [docs/roadmap.md](docs/roadmap.md) — 다음에 할 것

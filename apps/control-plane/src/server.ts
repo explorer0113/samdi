@@ -20,6 +20,7 @@ import {
 } from './channel-registry.js';
 import type { Db } from './db.js';
 import type { Pipeline } from './pipeline.js';
+import type { WorkerRegistry } from './worker-registry.js';
 import { TaskNotFoundError, TaskNotPendingError, type TaskStore } from './task-store.js';
 import type { ThreadStore } from './thread-store.js';
 
@@ -31,6 +32,8 @@ export interface ServerDeps {
   threads: ThreadStore;
   /** 채널 목록·키의 주인 */
   channels: ChannelRegistry;
+  /** claim에서 받아 적는 Worker 목록 */
+  workers: WorkerRegistry;
   /** Worker가 claim·보고에 쓰는 키 */
   workerKey: string;
   /** 관리 화면이 쓰는 키. 전체 조회와 채널 등록·키 발급 권한. */
@@ -46,6 +49,7 @@ export function buildServer({
   pipeline,
   threads,
   channels,
+  workers,
   workerKey,
   adminKey,
   uiDist,
@@ -140,6 +144,9 @@ export function buildServer({
 
   app.post('/tasks/claim', { preHandler: requireWorkerKey }, async (req) => {
     const body = claimRequestSchema.parse(req.body);
+    // 일을 가져가든 못 가져가든 "이 Worker가 이 라벨을 보고 있다"는 사실을 남긴다.
+    // 관리 화면이 아무도 안 보는 라벨을 짚어낼 수 있는 근거가 이것뿐이다.
+    workers.seen(body.workerId, body.labels);
     const task = store.claimNext(body.workerId, body.labels, body.leaseSeconds);
     const payload = task ? await store.getPayload(task.payloadRef) : null;
     return { task, payload };
@@ -214,15 +221,26 @@ export function buildServer({
     const threadCounts = db
       .prepare('SELECT status, COUNT(*) AS n FROM context_threads GROUP BY status')
       .all() as { status: string; n: number }[];
-    // 지금 일을 물고 있는 Worker들. Worker 등록 개념이 아직 없어서 Task에서 역산한다.
-    const workers = db
-      .prepare(
-        `SELECT worker_id AS workerId, COUNT(*) AS inFlight, MAX(lease_expires_at) AS leaseExpiresAt
-         FROM tasks
-         WHERE worker_id IS NOT NULL AND status IN ('claimed','running','waiting')
-         GROUP BY worker_id`,
-      )
-      .all() as { workerId: string; inFlight: number; leaseExpiresAt: string | null }[];
+    // 지금 일을 물고 있는 건 Task에서 세고, "누가 무슨 라벨을 보는가"는 claim 기록에서 온다.
+    // 둘을 합쳐야 쉬고 있는 Worker도 보인다 — 그게 라벨 미스매치를 짚는 근거다.
+    const inFlight = new Map(
+      (
+        db
+          .prepare(
+            `SELECT worker_id AS workerId, COUNT(*) AS n, MAX(lease_expires_at) AS leaseExpiresAt
+             FROM tasks
+             WHERE worker_id IS NOT NULL AND status IN ('claimed','running','waiting')
+             GROUP BY worker_id`,
+          )
+          .all() as { workerId: string; n: number; leaseExpiresAt: string | null }[]
+      ).map((r) => [r.workerId, r]),
+    );
+
+    const workerList = workers.list().map((w) => ({
+      ...w,
+      inFlight: inFlight.get(w.workerId)?.n ?? 0,
+      leaseExpiresAt: inFlight.get(w.workerId)?.leaseExpiresAt ?? null,
+    }));
 
     const tally = (rows: { status: string; n: number }[]) =>
       Object.fromEntries(rows.map((r) => [r.status, r.n]));
@@ -230,7 +248,12 @@ export function buildServer({
     return {
       tasks: tally(taskCounts),
       threads: tally(threadCounts),
-      workers,
+      workers: workerList,
+      /**
+       * 최근 살아 있던 Worker들이 보는 라벨. 여기 없는 라벨로 만든 Task는
+       * 아무도 가져가지 않으므로 화면이 경고할 수 있다.
+       */
+      coveredLabels: workers.coveredLabels(),
       channels: channels.list().length,
     };
   });

@@ -164,6 +164,7 @@ export function App() {
           <Overviews overview={overview} active={taskCount(ACTIVE)} />
           <Channels
             channels={channels}
+            coveredLabels={overview?.coveredLabels ?? null}
             issuedKey={issuedKey}
             onIssued={setIssuedKey}
             onError={handleError}
@@ -217,7 +218,20 @@ export function App() {
                       <td className="preview" title={t.preview}>
                         {t.preview}
                       </td>
-                      <td>{t.label}</td>
+                      <td>
+                        {t.label}
+                        {/* pending인데 아무도 이 라벨을 안 보면 영영 안 움직인다 */}
+                        {t.status === 'pending' &&
+                          overview !== null &&
+                          !overview.coveredLabels.includes(t.label) && (
+                            <span
+                              className="chip stalled orphan"
+                              title={`이 라벨을 보는 Worker가 없어서 시작되지 않습니다. Worker의 worker.labels에 "${t.label}"을 추가하세요.`}
+                            >
+                              Worker 없음
+                            </span>
+                          )}
+                      </td>
                       <td className="mono">{t.agent ?? '기본'}</td>
                       <td className="mono">{t.workerId ?? '—'}</td>
                       <td className="mono">{timeOf(t.updatedAt)}</td>
@@ -258,6 +272,13 @@ export function App() {
   );
 }
 
+/** 폴링 주기보다 넉넉하게 잡는다 — 일하는 동안에는 claim을 쉬므로 잠깐 멀어진다. */
+const WORKER_ONLINE_SECONDS = 60;
+
+function isOnline(lastSeenAt: string): boolean {
+  return Date.now() - Date.parse(lastSeenAt) < WORKER_ONLINE_SECONDS * 1000;
+}
+
 function Overviews({ overview, active }: { overview: Overview | null; active: number }) {
   if (!overview) return null;
   const statuses = Object.entries(overview.tasks).sort(([a], [b]) => a.localeCompare(b));
@@ -279,22 +300,28 @@ function Overviews({ overview, active }: { overview: Overview | null; active: nu
 
       <h3>Worker</h3>
       {overview.workers.length === 0 ? (
-        <p className="empty">지금 일을 물고 있는 Worker가 없습니다.</p>
+        <p className="empty">아직 붙은 Worker가 없습니다. Task를 만들어도 아무도 가져가지 않습니다.</p>
       ) : (
         <ul className="activity">
           {overview.workers.map((w) => (
             <li key={w.workerId}>
+              <span className={`dot ${isOnline(w.lastSeenAt) ? 'on' : 'off'}`} aria-hidden />
               <span className="mono">{w.workerId}</span>
-              <span>{w.inFlight}건 처리 중</span>
-              {w.leaseExpiresAt && (
-                <span className="detail">lease {timeOf(w.leaseExpiresAt)}까지</span>
-              )}
+              <span className="mono worker-labels">{w.labels.join(', ')}</span>
+              <span className="detail">
+                {w.inFlight > 0
+                  ? `${w.inFlight}건 처리 중`
+                  : isOnline(w.lastSeenAt)
+                    ? '대기 중'
+                    : `${timeOf(w.lastSeenAt)} 이후 조용함`}
+              </span>
             </li>
           ))}
         </ul>
       )}
       <p className="hint">
-        Worker 등록 개념은 아직 없습니다 — 지금 Task를 물고 있는 Worker를 역산해 보여줍니다.
+        Worker가 claim할 때 알려온 라벨입니다. <b>여기 없는 라벨</b>로 만든 Task는 아무도
+        가져가지 않고 <code>pending</code>에 남습니다.
       </p>
     </section>
   );
@@ -302,12 +329,15 @@ function Overviews({ overview, active }: { overview: Overview | null; active: nu
 
 function Channels({
   channels,
+  coveredLabels,
   issuedKey,
   onIssued,
   onError,
   onChanged,
 }: {
   channels: ChannelRow[];
+  /** null이면 아직 모른다 — 모르는 상태에서 경고하지 않는다 */
+  coveredLabels: string[] | null;
   issuedKey: { channelId: string; key: string } | null;
   onIssued: (v: { channelId: string; key: string } | null) => void;
   onError: (err: unknown) => void;
@@ -420,10 +450,25 @@ function Channels({
             </tr>
           </thead>
           <tbody>
-            {channels.map((c) => (
+            {channels.map((c) => {
+              // 아무도 이 라벨을 안 보면 Task가 만들어져도 pending에 남는다.
+              // 등록 시점에 라벨을 안 적으면 id가 라벨이 되므로 쉽게 어긋난다.
+              const orphan =
+                !c.disabledAt && coveredLabels !== null && !coveredLabels.includes(c.label);
+              return (
               <tr key={c.id} className={c.disabledAt ? 'disabled' : ''}>
                 <td className="mono">{c.id}</td>
-                <td>{c.label}</td>
+                <td>
+                  {c.label}
+                  {orphan && (
+                    <span
+                      className="chip stalled orphan"
+                      title={`이 라벨을 보는 Worker가 없습니다. 이 채널로 만들어진 Task는 pending에 남습니다. Worker의 worker.labels에 "${c.label}"을 추가하거나, 이미 처리 중인 라벨로 채널을 다시 등록하세요.`}
+                    >
+                      Worker 없음
+                    </span>
+                  )}
+                </td>
                 <td className="mono">{c.interpreter.mode}</td>
                 <td className="mono">{c.maskedKey}</td>
                 <td>
@@ -451,7 +496,8 @@ function Channels({
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

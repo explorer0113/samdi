@@ -5,6 +5,7 @@ import { Pipeline, type PipelineLog } from './pipeline.js';
 import { buildServer } from './server.js';
 import { SqlitePayloadStore, TaskStore } from './task-store.js';
 import { ThreadStore } from './thread-store.js';
+import { WorkerRegistry } from './worker-registry.js';
 
 /**
  * Control Plane — 수집기 → 해석기 → 분배기.
@@ -37,6 +38,9 @@ const channels = new ChannelRegistry(db);
 channels.syncFromConfig(config.channels);
 channels.load();
 
+// Worker는 claim할 때마다 자기 라벨을 알려온다 — 그걸 받아 적는 게 등록을 대신한다.
+const workers = new WorkerRegistry(db);
+
 // 라우트는 파이프라인을, 파이프라인은 서버의 로거를 필요로 한다.
 // 로거 참조를 한 단계 늦춰서 순환을 푼다.
 let logger: PipelineLog = { info: () => {}, error: () => {} };
@@ -50,6 +54,7 @@ const app = buildServer({
   pipeline,
   threads,
   channels,
+  workers,
   workerKey: config.workerKey,
   adminKey: config.adminKey,
   uiDist: config.uiDist,

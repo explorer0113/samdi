@@ -204,6 +204,8 @@ cp samdi.worker.example.yaml samdi.worker.yaml   # Worker
 전체 키·환경변수 매핑·작업 레시피는 **[docs/configuration.md](docs/configuration.md)** 에 있다.
 사람과 코딩 에이전트가 같은 문서로 설정을 바꿀 수 있게 쓰였다.
 
+HTTP API 전체와 실행 가능한 `curl` 예시는 **[docs/api.md](docs/api.md)** 에 있다.
+
 이 저장소에서 작업하는 코딩 에이전트를 위한 지침은 **[AGENTS.md](AGENTS.md)** 에 따로 있다 —
 깨뜨리면 안 되는 설계 제약과 자주 밟는 지뢰를 모아뒀다.
 

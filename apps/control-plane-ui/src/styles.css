@@ -312,3 +312,7 @@ tbody tr.disabled td { opacity: 0.55; }
 .card-head h2 { margin: 0; }
 .toggle { margin-left: auto; display: flex; gap: 6px; }
 button.small.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+
+/* 아무 Worker도 안 보는 라벨 — Task가 pending에 갇힌다는 신호 */
+.chip.orphan { margin-left: 6px; cursor: help; }
+.worker-labels { color: var(--muted); }
