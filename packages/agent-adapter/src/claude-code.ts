@@ -59,7 +59,10 @@ export function buildRunnerScript(opts: {
     '# samdi가 만든 실행 스크립트. Claude Code에 작업 지시를 넘긴다.',
     `cd ${shq(opts.cwd)} || exit 1`,
     `prompt=$(cat ${shq(opts.promptFile)})`,
-    `exec ${shq(opts.bin)} ${flags.join(' ')} "$prompt"`,
+    // `--`로 옵션 파싱을 끊고 프롬프트를 넘긴다.
+    // --allowedTools는 가변 인자라, 이게 없으면 뒤따르는 프롬프트까지
+    // 도구 이름으로 삼켜서 세션이 프롬프트 없이 열린다.
+    `exec ${shq(opts.bin)} ${flags.join(' ')} -- "$prompt"`,
     '',
   ].join('\n');
 }

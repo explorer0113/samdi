@@ -58,6 +58,17 @@ describe('실행 스크립트', () => {
     expect(args).toContain('Bash(curl *),Read');
   });
 
+  it('프롬프트 앞에 `--`를 둔다 — 가변 인자 옵션이 프롬프트를 삼키지 않게', () => {
+    // --allowedTools는 가변 인자라 `--` 없이는 프롬프트까지 도구 이름으로 먹는다.
+    // 그러면 Claude Code가 프롬프트 없이 빈 세션으로 열린다.
+    const args = runWithFakeClaude('go로 헬로월드 짜줘');
+    const sep = args.indexOf('--');
+    expect(sep).toBeGreaterThan(-1);
+    expect(args.slice(sep + 1)).toEqual(['go로 헬로월드 짜줘']);
+    // 도구 목록에 프롬프트가 섞여 있지 않아야 한다
+    expect(args.slice(0, sep)).not.toContain('go로 헬로월드 짜줘');
+  });
+
   it('permissionMode는 준 경우에만 붙는다', () => {
     const script = buildRunnerScript({
       bin: 'claude',
