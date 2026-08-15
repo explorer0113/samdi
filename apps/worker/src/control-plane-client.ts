@@ -13,15 +13,16 @@ export class ControlPlaneClient {
     private readonly workerKey: string,
   ) {}
 
-  private headers() {
-    return { 'content-type': 'application/json', 'x-worker-key': this.workerKey };
-  }
-
   private async request(path: string, init?: RequestInit): Promise<unknown> {
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: { ...this.headers(), ...(init?.headers ?? {}) },
-    });
+    const headers: Record<string, string> = {
+      'x-worker-key': this.workerKey,
+      ...((init?.headers as Record<string, string> | undefined) ?? {}),
+    };
+    // 본문이 있을 때만 content-type을 붙인다. 본문 없는 POST에 붙이면
+    // Fastify가 "Body cannot be empty"로 거부한다.
+    if (init?.body !== undefined) headers['content-type'] = 'application/json';
+
+    const res = await fetch(`${this.baseUrl}${path}`, { ...init, headers });
     if (!res.ok) throw new Error(`${path} failed: ${res.status} ${await res.text()}`);
     return res.json();
   }
@@ -63,6 +64,13 @@ export class ControlPlaneClient {
       task: Task;
       payload: string | null;
       events: TaskEvent[];
+    };
+  }
+
+  /** 시작 시 한 번: 이전 실행이 물고 있던 Task를 stalled로 되돌린다. */
+  async recover(workerId: string): Promise<{ recovered: string[] }> {
+    return (await this.request(`/workers/${workerId}/recover`, { method: 'POST' })) as {
+      recovered: string[];
     };
   }
 

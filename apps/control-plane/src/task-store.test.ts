@@ -93,6 +93,38 @@ describe('TaskStore', () => {
     expect(store.listTasks({ view: 'all' })[0]?.status).toBe('stalled');
   });
 
+  it('Worker 재시작 신고: 물고 있던 Task를 stalled로 되돌린다', async () => {
+    // 승인 대기 중이던 Task (재시작하면 메모리의 대기 정보가 사라진다)
+    const waiting = await store.createTask('demo', 'demo', '승인 대기');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(waiting.id, { type: 'started' });
+    store.applyReport(waiting.id, { type: 'waiting', question: '할까요?' });
+    // 다른 Worker가 처리 중인 Task는 건드리지 않는다
+    const other = await store.createTask('demo', 'demo', '남의 것');
+    store.claimNext('w2', ['demo'], 600);
+
+    expect(store.recoverWorkerTasks('w1')).toEqual([waiting.id]);
+
+    const byId = new Map(store.listTasks({ view: 'all' }).map((t) => [t.id, t.status]));
+    expect(byId.get(waiting.id)).toBe('stalled');
+    expect(byId.get(other.id)).toBe('claimed');
+
+    // 사람이 재시도하면 다시 pending으로 — 기존 수동 게이트를 그대로 탄다
+    expect(store.resolveStalled(waiting.id, 'retry').status).toBe('pending');
+
+    const detail = await store.getTaskDetail(waiting.id);
+    expect(detail.events.some((e) => e.type === 'stalled')).toBe(true);
+  });
+
+  it('되돌릴 게 없으면 아무 일도 하지 않는다', async () => {
+    const done = await store.createTask('demo', 'demo', 'x');
+    store.claimNext('w1', ['demo'], 600);
+    store.applyReport(done.id, { type: 'started' });
+    store.applyReport(done.id, { type: 'completed' });
+    expect(store.recoverWorkerTasks('w1')).toEqual([]);
+    expect(store.listTasks({ view: 'all' })[0]?.status).toBe('completed');
+  });
+
   it('Start Gate 기각은 rejected로 마감된다', async () => {
     const b = await store.createTask('demo', 'demo', 'b');
     store.claimNext('w1', ['demo'], 600);

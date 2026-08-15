@@ -179,6 +179,22 @@ process.on('SIGTERM', () => {
 
 async function main() {
   await app.listen({ port: reportPort, host: '127.0.0.1' });
+
+  // 이전 실행이 물고 있던 Task를 정리한다. 재시작하면 에이전트도 승인 대기도
+  // 사라지므로, 그대로 두면 waiting에 멈춘 채 승인 버튼도 없는 상태가 된다.
+  try {
+    const { recovered } = await client.recover(workerId);
+    if (recovered.length > 0) {
+      activity.push('recovered', undefined, `${recovered.length}건을 stalled로 되돌림`);
+      app.log.warn(
+        { workerId, recovered: recovered.length },
+        'previous run left tasks in flight; moved to stalled for manual retry',
+      );
+    }
+  } catch (err) {
+    app.log.error({ err: String(err) }, 'startup recovery failed');
+  }
+
   app.log.info(
     {
       config: source ?? '(기본값)',

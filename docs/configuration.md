@@ -339,6 +339,17 @@ curl -X POST http://127.0.0.1:3000/channels/mail/events \
   -d '{"payload":"자연어 본문"}'
 ```
 
+### 승인 버튼이 안 뜬다 (Task는 `waiting`인데)
+
+승인 대기는 Worker의 메모리에 있다. Worker가 재시작하면(개발 중 파일 저장 → `tsx watch`,
+크래시, 수동 재시작) 에이전트 프로세스와 함께 그 대기 정보도 사라진다.
+
+Worker는 시작할 때 이전 실행이 물고 있던 Task를 **`stalled`로 되돌린다** — 그러면 목록에
+재시도/포기 버튼이 뜬다. 재시도하면 처음부터 다시 처리되고 승인도 다시 요청된다.
+로그에 `previous run left tasks in flight; moved to stalled for manual retry`가 남는다.
+
+> `worker.id`가 겹치면 서로의 Task를 되돌린다. Worker를 여러 대 띄운다면 **id를 다르게** 준다.
+
 ### 완료된 Task가 UI 목록에서 사라졌다
 
 의도된 동작이다. UI는 1.5초마다 목록을 폴링하므로 종결된 Task(`completed`·`failed`·`rejected`)는

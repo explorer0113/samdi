@@ -192,6 +192,30 @@ export class TaskStore {
     return toTask(this.getRow(taskId));
   }
 
+  /**
+   * Worker가 다시 시작했을 때, 그 Worker가 물고 있던 진행 중 Task를 stalled로 되돌린다.
+   *
+   * 재시작하면 에이전트 프로세스도, 승인 대기 같은 메모리 상태도 함께 사라진다.
+   * 그대로 두면 Task가 waiting/running에 멈춘 채 lease 만료까지(기본 10분) 방치되고,
+   * 승인 버튼도 뜨지 않는다. 부수효과가 이미 나갔는지는 알 수 없으므로 자동 재실행이
+   * 아니라 stalled로 세워 사람이 재시도/포기를 고르게 한다.
+   */
+  recoverWorkerTasks(workerId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, status FROM tasks
+         WHERE worker_id = ? AND status IN ('claimed', 'running', 'waiting')`,
+      )
+      .all(workerId) as Array<{ id: string; status: string }>;
+    for (const row of rows) {
+      this.db
+        .prepare(`UPDATE tasks SET status = 'stalled', updated_at = ? WHERE id = ?`)
+        .run(now(), row.id);
+      this.appendEvent(row.id, 'stalled', { from: row.status, reason: 'worker 재시작' });
+    }
+    return rows.map((r) => r.id);
+  }
+
   /** lease 만료 → stalled. 자동 재배포는 하지 않는다 (SOP: 수동 게이트). */
   sweepExpiredLeases(): number {
     const t = now();

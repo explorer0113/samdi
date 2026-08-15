@@ -103,6 +103,15 @@ export function buildServer({
     return { task };
   });
 
+  /**
+   * Worker 재시작 신고. 그 Worker가 물고 있던 진행 중 Task를 stalled로 세운다.
+   * (에이전트도 승인 대기도 함께 사라졌으므로, 사람이 재시도를 결정해야 한다.)
+   */
+  app.post('/workers/:workerId/recover', { preHandler: requireWorkerKey }, async (req) => {
+    const { workerId } = req.params as { workerId: string };
+    return { recovered: store.recoverWorkerTasks(workerId) };
+  });
+
   /** 처리할 에이전트 지정 — pending 동안만 가능 */
   app.post('/tasks/:taskId/agent', { preHandler: requireWorkerKey }, async (req) => {
     const { taskId } = req.params as { taskId: string };
